@@ -20,10 +20,9 @@
     "patch:pi-deps": "node scripts/patch-pi-bundled-deps.cjs",
     "postinstall": "npm run patch:pi-deps",
     "check": "npm run typecheck && npm run build:client && npm run build:server",
-    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
-    "build:portable:zip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1 -Zip",
+    "build:runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-runtime-stage.ps1",
     "dev:electron": "electron desktop/main.cjs",
-    "build:electron": "node scripts/make-icon.mjs && npm run build:portable && npx electron-builder --win && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/zip-desktop.ps1",
+    "build:electron": "node scripts/make-icon.mjs && npm run build:runtime && npx electron-builder --win --dir",
     "start": "npm run start -w server",
     "setup": "npm install --workspaces --include=dev && npm run build:client"
   },

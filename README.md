@@ -62,41 +62,23 @@ npm run dev:client   # 终端 2 → http://localhost:5173
 
 在「Skills」面板中可直接上传 skill 的 `.zip` 文件，或选择包含一个/多个 skill 文件夹的目录导入；每个 skill 文件夹必须包含标准的 `SKILL.md`。
 
-## 绿色便携版（Windows）
+## Windows 桌面版
 
-项目支持打成“解压即用”的 Windows 便携目录，内置 Node 24.12 运行时、完整依赖和已构建前端，目标电脑无需安装 Node.js、npm 或 Pi。
-
-```bash
-# 生成 dist/portable/Pi Studio/（可直接分发整个文件夹）
-npm run build:portable
-
-# 额外生成 Pi Studio-portable-win-x64.zip（约 120-180MB）
-npm run build:portable:zip
-```
-
-- 双击 `启动 Pi Studio.bat` 即可启动，服务就绪后自动打开浏览器（`http://localhost:8787`）。
-- Pi 的模型配置、密钥、会话和工作区列表全部保存在应用内 `data/` 目录，不会写入用户目录；复制/删除整个文件夹即可迁移或清理。
-- 打包过程只需联网一次（下载官方 Node 与依赖）；最终用户运行不需要任何网络或安装操作。
-- 若端口 8787 已被占用，说明已有实例在运行，启动器会直接提示打开已有页面。
-
-### 桌面版（单文件 exe）
-
-项目同时提供 Electron 桌面版，无需安装 Node.js、npm 或 Pi。桌面版有两种分发形态：
+项目只发布 Electron 的文件夹版，无需安装 Node.js、npm 或 Pi：
 
 ```bash
-# 生成 dist/electron/win-unpacked/ 与两个 zip
+# 生成 dist/electron/win-unpacked/
 npm run build:electron
 ```
 
-- **免解压文件夹版（推荐）**：`dist/electron/Pi Studio-desktop-win-x64.zip`，解压后双击 `Pi Studio.exe`，启动只需几秒；数据保存在 exe 同级 `data/` 目录。
-- **单文件 exe（可选）**：`dist/electron/Pi Studio 便携版.exe`（对应 `Pi Studio-single-exe-win-x64.zip`）。单文件每次启动都要把内置内容解压到临时目录，首次和之后每次启动都较慢（约 1-3 分钟），适合只需要分发单个文件的场景。
+- **文件夹版**：下载 Release 中的 `Pi-Studio-desktop-win-x64-*.zip`，解压后双击 `Pi Studio.exe`，启动只需几秒。
 - 模型配置、密钥、会话和工作区列表保存在 exe 同级的 `data/` 目录，整个文件夹一起复制即可迁移。
-- 打包产物不包含任何 `data/` 内容，所以不会带出本机的模型配置或 API Key；便携版默认离线运行（`PI_OFFLINE=1`），避免启动/注册供应商时联网卡住。
+- 打包产物不包含任何 `data/` 内容，所以不会带出本机的模型配置或 API Key。
 - 开发调试可运行 `npm run dev:electron`；默认端口同样是 8787。
 
 ## 使用 MCP
 
-1. **应用配置**：MCP 保存在应用数据目录的 `data/pi-agent/mcp.json`（便携版即为 `Pi Studio\\data\\pi-agent\\mcp.json`）。应用不会读取 `~/.config/mcp`、`~/.agents`、工作区 `.mcp.json` / `.pi/mcp.json` 或其他客户端配置。右侧「MCP 管理」可查看状态、重连、移除。
+1. **应用配置**：MCP 保存在应用数据目录的 `data/pi-agent/mcp.json`。应用不会读取 `~/.config/mcp`、`~/.agents`、工作区 `.mcp.json` / `.pi/mcp.json` 或其他客户端配置。右侧「MCP 管理」可查看状态、重连、移除。
 2. **手动添加**：「MCP 管理 → ＋ 手动添加」支持**表单模式**（名称 + 命令 + 参数）与 **JSON 模式**（粘贴完整配置批量导入）。
 3. **对话中使用**：直接让 agent 调用即可，例如：
 

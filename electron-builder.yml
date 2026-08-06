@@ -11,13 +11,13 @@ files:
   - desktop/assets/pi-studio-logo.ico
   - desktop/assets/pi-studio-logo.svg
 extraResources:
-  - from: dist/portable/Pi Studio/runtime
+  - from: dist/runtime-stage/Pi Studio/runtime
     to: runtime
-  - from: dist/portable/Pi Studio/node_modules
+  - from: dist/runtime-stage/Pi Studio/node_modules
     to: node_modules
-  - from: dist/portable/Pi Studio/server/dist
+  - from: dist/runtime-stage/Pi Studio/server/dist
     to: server/dist
-  - from: dist/portable/Pi Studio/client/dist
+  - from: dist/runtime-stage/Pi Studio/client/dist
     to: client/dist
 npmRebuild: false
 afterPack: scripts/after-pack.cjs
@@ -30,7 +30,3 @@ win:
     - target: dir
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
-  artifactName: Pi Studio 便携版.exe

@@ -1,11 +1,4 @@
-# Build the portable "Pi Studio" folder with an embedded Node runtime.
-# Usage:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1 -Zip
-
-param(
-  [switch]$Zip
-)
+# Assemble Electron's private runtime stage. This is not a distributable app.
 
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -17,7 +10,7 @@ $nodeUrl = "https://nodejs.org/dist/$nodeVersion/$nodeZipName"
 $cacheDir = Join-Path $root ".cache\node"
 $nodeZipPath = Join-Path $cacheDir $nodeZipName
 $nodeExtractDir = Join-Path $cacheDir $nodeDirName
-$portableRoot = Join-Path $root "dist\portable"
+$portableRoot = Join-Path $root "dist\runtime-stage"
 $appName = "Pi Studio"
 $appDir = Join-Path $portableRoot $appName
 $runtimeDir = Join-Path $appDir "runtime"
@@ -107,22 +100,5 @@ if ($LASTEXITCODE -ge 8) { throw "robocopy server/dist failed with exit code $LA
 robocopy (Join-Path $root "client\dist") (Join-Path $appDir "client\dist") /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy client/dist failed with exit code $LASTEXITCODE" }
 
-$portableSourceDir = Join-Path $root "portable"
-$launcherFile = Get-ChildItem -LiteralPath $portableSourceDir -Filter "*.bat" | Select-Object -First 1
-$readmeFile = Get-ChildItem -LiteralPath $portableSourceDir -Filter "*.txt" | Select-Object -First 1
-Copy-Item -LiteralPath $launcherFile.FullName (Join-Path $appDir $launcherFile.Name)
-if ($readmeFile) {
-  Copy-Item -LiteralPath $readmeFile.FullName (Join-Path $appDir $readmeFile.Name)
-}
-
 $sizeMb = [math]::Round(((Get-ChildItem $appDir -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
-Write-Host "==> Portable app ready: $appDir ($sizeMb MB)"
-
-if ($Zip) {
-  $zipPath = Join-Path $portableRoot "$appName-portable-win-x64.zip"
-  if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-  Write-Host "==> Zipping (this can take a few minutes)..."
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  [System.IO.Compression.ZipFile]::CreateFromDirectory($appDir, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-  Write-Host "==> Zip ready: $zipPath"
-}
+Write-Host "==> Electron runtime stage ready: $appDir ($sizeMb MB)"
