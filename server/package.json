@@ -22,6 +22,7 @@
     "multer": "^2.0.1",
     "pi-hermes-memory": "^0.9.3",
     "pi-mcp-adapter": "^2.18.0",
+    "pi-subagents": "^0.41.0",
     "typebox": "*",
     "undici": "8.9.0",
     "ws": "^8.18.0",

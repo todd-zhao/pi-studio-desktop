@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PiSocket, listAgents, listSessions, listWorkspaces, setActiveAgent } from "./api";
+import { PiSocket, getSubagents, listAgents, listSessions, listWorkspaces, setActiveAgent, setSubagents } from "./api";
 import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
@@ -59,6 +59,7 @@ export default function App() {
   const [liveThinking, setLiveThinking] = useState("");
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [queued, setQueued] = useState<{ steering: number; followUp: number } | null>(null);
+  const [subagentsEnabled, setSubagentsEnabled] = useState(false);
   const [question, setQuestion] = useState<AskUserQuestion | null>(null);
   const [customAnswer, setCustomAnswer] = useState("");
 
@@ -225,6 +226,7 @@ export default function App() {
     });
 
     socket.connect();
+    void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
     // Optional deep-link: ?session=<absolute session file path>
     const deepLink = new URLSearchParams(location.search).get("session");
     if (deepLink) {
@@ -337,6 +339,8 @@ export default function App() {
           onSetAgent={(id) => {
             void setActiveAgent(id).catch((e) => toast("error", e.message));
           }}
+          subagentsEnabled={subagentsEnabled}
+          onToggleSubagents={(enabled) => void setSubagents(enabled).then((v) => { setSubagentsEnabled(v.enabled); toast("ok", v.enabled ? "多智能体已开启" : "多智能体已关闭"); }).catch((e) => toast("error", e.message))}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>

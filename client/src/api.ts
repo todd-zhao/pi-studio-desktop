@@ -256,6 +256,8 @@ export const saveSchedule = (task: Partial<ScheduledTask>) => json<ScheduledTask
 export const runSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}/run`, {method:"POST"});
 export const setScheduleEnabled = (id:string, enabled:boolean) => json<ScheduledTask>(`/api/schedules/${encodeURIComponent(id)}/enabled`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
 export const removeSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}`,{method:"DELETE"});
+export const getSubagents = () => json<{enabled:boolean}>("/api/subagents");
+export const setSubagents = (enabled:boolean) => json<{enabled:boolean}>("/api/subagents",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
 
 export async function getEnvironment(): Promise<{ home?: string; username?: string }> {
   return json("/api/env");

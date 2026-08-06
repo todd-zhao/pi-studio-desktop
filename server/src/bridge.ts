@@ -130,6 +130,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private customWorkspaces: string[] = [];
   private readonly agentsFile: string;
   private readonly hermesMemoryExtensionPath: string;
+  private readonly subagentsExtensionPath: string;
+  private subagentsEnabled = false;
   private agents: AgentProfile[] = [];
   private activeAgentId = "default";
   private pendingQuestions = new Map<string, { resolve: (answer: string) => void; timer: NodeJS.Timeout }>();
@@ -141,6 +143,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.agentDir = options.agentDir ?? getAgentDir();
     this.loadGlobalExtensions = options.loadGlobalExtensions ?? false;
     this.skillsDir = join(this.agentDir, "skills");
+    this.subagentsExtensionPath = appRequire.resolve("pi-subagents");
+    try { this.subagentsEnabled = !!JSON.parse(readFileSync(join(this.agentDir, "subagents.json"), "utf8")).enabled; } catch { /* default off */ }
     mkdirSync(this.skillsDir, { recursive: true });
     this.agentsFile = join(this.agentDir, "agents.json");
     this.hermesMemoryExtensionPath = appRequire.resolve("pi-hermes-memory");
@@ -205,7 +209,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           // Skills are app-owned; do not inherit host-global or workspace skills.
           noSkills: true,
           additionalSkillPaths: [this.skillsDir],
-          additionalExtensionPaths: [this.hermesMemoryExtensionPath],
+          additionalExtensionPaths: [this.hermesMemoryExtensionPath, ...(this.subagentsEnabled ? [this.subagentsExtensionPath] : [])],
           appendSystemPromptOverride: (base) => {
             const agent = this.getActiveAgent();
             const additions: string[] = [];
@@ -381,6 +385,16 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   getSkillsDirectory(): string {
     return this.skillsDir;
+  }
+
+  isSubagentsEnabled(): boolean { return this.subagentsEnabled; }
+  async setSubagentsEnabled(enabled: boolean): Promise<void> {
+    if (enabled === this.subagentsEnabled) return;
+    this.subagentsEnabled = enabled;
+    writeFileSync(join(this.agentDir, "subagents.json"), JSON.stringify({ enabled }, null, 2));
+    await this.runtime.session.reload();
+    await this.bindSession();
+    this.pushState();
   }
 
   private askUser(question: string, options: Array<{ label: string; description?: string }>, allowFreeform: boolean): Promise<string> {

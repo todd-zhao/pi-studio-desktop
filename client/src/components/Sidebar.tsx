@@ -25,6 +25,8 @@ interface Props {
   onPickFile: (relPath: string, name: string) => void;
   onPreviewFile: (relPath: string, name: string) => void;
   onCollapse: () => void;
+  subagentsEnabled: boolean;
+  onToggleSubagents: (enabled: boolean) => void;
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -132,6 +134,7 @@ export function Sidebar(props: Props) {
       <button className={`team-entry-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}><span className="team-entry-icon">◷</span><span>定时任务</span><span className="team-entry-arrow">›</span></button>
 
       <div className="sidebar-section">运行配置</div>
+      <div className="sel-row subagents-toggle"><label>多智能体</label><button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button><small>{props.subagentsEnabled ? "已开启" : "关闭"}</small></div>
       <div className="sel-row">
         <label>助手</label>
         <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>

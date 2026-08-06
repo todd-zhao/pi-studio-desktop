@@ -654,6 +654,8 @@ const wss = new WebSocketServer({
     done(true);
   },
 });
+app.get("/api/subagents", (_req, res) => res.json({ enabled: bridge.isSubagentsEnabled() }));
+app.post("/api/subagents", async (req, res) => { try { await bridge.setSubagentsEnabled(!!req.body.enabled); res.json({ enabled: bridge.isSubagentsEnabled() }); } catch(e) { res.status(400).json({ error:(e as Error).message }); } });
 
 app.get("/api/schedules", (_req, res) => res.json(scheduler.list()));
 app.post("/api/schedules", (req, res) => {
