@@ -673,6 +673,7 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
   const onWorkspaces = (workspaces: WorkspaceInfo[]) => send(ws, { type: "workspaces", workspaces });
   const onLog = (level: "info" | "warn" | "error", message: string) => send(ws, { type: "log", level, message });
   const onError = (message: string) => send(ws, { type: "error", message });
+  const onAskUser = (question: import("./types.ts").AskUserQuestion) => send(ws, { type: "ask_user", question });
 
   bridge.on("state", onState);
   bridge.on("event", onEvent);
@@ -681,6 +682,7 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
   bridge.on("workspaces", onWorkspaces);
   bridge.on("log", onLog);
   bridge.on("error", onError);
+  bridge.on("ask_user", onAskUser);
 
   ws.on("close", () => {
     bridge.off("state", onState);
@@ -690,6 +692,7 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
     bridge.off("workspaces", onWorkspaces);
     bridge.off("log", onLog);
     bridge.off("error", onError);
+    bridge.off("ask_user", onAskUser);
   });
 
   ws.on("message", (raw) => {
@@ -757,6 +760,9 @@ async function handleClientMessage(ws: WebSocket, msg: ClientWsMessage): Promise
         break;
       case "add_workspace":
         bridge.addWorkspace(msg.path);
+        break;
+      case "ask_user_answer":
+        bridge.answerUserQuestion(msg.id, msg.answer);
         break;
     }
   } catch (e) {

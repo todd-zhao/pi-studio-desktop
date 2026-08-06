@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PiSocket, listAgents, listSessions, listWorkspaces, setActiveAgent } from "./api";
-import type { AgentProfile, AppState, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WorkspaceInfo } from "./types";
+import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
@@ -58,6 +58,8 @@ export default function App() {
   const [liveThinking, setLiveThinking] = useState("");
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [queued, setQueued] = useState<{ steering: number; followUp: number } | null>(null);
+  const [question, setQuestion] = useState<AskUserQuestion | null>(null);
+  const [customAnswer, setCustomAnswer] = useState("");
 
   const socketRef = useRef<PiSocket | null>(null);
   const composerRef = useRef<ComposerHandle | null>(null);
@@ -214,6 +216,10 @@ export default function App() {
         case "error":
           toast("error", msg.message);
           break;
+        case "ask_user":
+          setCustomAnswer("");
+          setQuestion(msg.question);
+          break;
       }
     });
 
@@ -298,6 +304,11 @@ export default function App() {
       />
     </>
   );
+  const answerQuestion = (answer: string) => {
+    if (!question || !answer.trim()) return;
+    socketRef.current?.send({ type: "ask_user_answer", id: question.id, answer: answer.trim() });
+    setQuestion(null); setCustomAnswer("");
+  };
 
   return (
     <div className="app">
@@ -384,6 +395,18 @@ export default function App() {
           onClose={() => setPreview(null)}
           onInsertRef={(path) => handlePickFile(path, path.split("/").pop() ?? path)}
         />
+      )}
+      {question && (
+        <div className="ask-user-backdrop" role="dialog" aria-modal="true" aria-label="Agent 澄清问题">
+          <div className="ask-user-card">
+            <div className="ask-user-kicker">Agent 需要确认</div>
+            <h2>{question.question}</h2>
+            <div className="ask-user-options">
+              {question.options.map((option) => <button key={option.label} className="ask-user-option" onClick={() => answerQuestion(option.label)}><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</button>)}
+            </div>
+            {question.allowFreeform && <div className="ask-user-freeform"><input autoFocus value={customAnswer} placeholder="输入你的想法…" onChange={(e) => setCustomAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(customAnswer); }} /><button className="btn primary" disabled={!customAnswer.trim()} onClick={() => answerQuestion(customAnswer)}>提交</button></div>}
+          </div>
+        </div>
       )}
       <div className="toasts">
         {toasts.map((t) => (

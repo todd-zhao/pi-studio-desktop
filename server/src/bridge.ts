@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createMcpAdapter, MCP_STATUS_EVENT } from "pi-mcp-adapter";
+import { Type } from "typebox";
 import type { McpConfig } from "pi-mcp-adapter/types";
 import type { McpStatusSnapshot } from "./types.ts";
 import type {
@@ -107,6 +108,7 @@ interface BridgeEvents {
   workspaces: [WorkspaceInfo[]];
   log: [level: "info" | "warn" | "error", message: string];
   error: [message: string];
+  ask_user: [question: import("./types.ts").AskUserQuestion];
 }
 
 export class PiBridge extends EventEmitter<BridgeEvents> {
@@ -130,6 +132,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private readonly hermesMemoryExtensionPath: string;
   private agents: AgentProfile[] = [];
   private activeAgentId = "default";
+  private pendingQuestions = new Map<string, { resolve: (answer: string) => void; timer: NodeJS.Timeout }>();
 
   constructor(options: BridgeOptions) {
     super();
@@ -184,6 +187,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     const appMcpAdapter = (pi: Parameters<ReturnType<typeof createMcpAdapter>>[0]) => {
       createMcpAdapter({ config: this.readMcpConfig() })(pi);
     };
+    const askUserExtension = (pi: any) => pi.registerTool({
+      name: "ask_user", label: "Ask user",
+      description: "Ask a focused clarification question when the goal, scope, preference, or an irreversible choice is unclear. Prefer 2-5 concise options and allow freeform input.",
+      parameters: Type.Object({ question: Type.String(), options: Type.Optional(Type.Array(Type.Object({ label: Type.String(), description: Type.Optional(Type.String()) }))), allowFreeform: Type.Optional(Type.Boolean()) }),
+      execute: async (_id: string, params: { question: string; options?: Array<{ label: string; description?: string }>; allowFreeform?: boolean }) => ({ content: [{ type: "text", text: await this.askUser(params.question, params.options ?? [], params.allowFreeform !== false) }] }),
+    });
     return async ({ cwd, sessionManager, sessionStartEvent }) => {
       const services = await createAgentSessionServices({
         cwd,
@@ -206,7 +215,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           },
           // Passing config programmatically bypasses pi-mcp-adapter host discovery.
           // The wrapper rereads the app file on every resource reload.
-          extensionFactories: [appMcpAdapter],
+          extensionFactories: [appMcpAdapter, askUserExtension],
         },
       });
       return {
@@ -214,7 +223,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           services,
           sessionManager,
           sessionStartEvent,
-          tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+          tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "ask_user"],
         })),
         services,
         diagnostics: services.diagnostics,
@@ -372,6 +381,21 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   getSkillsDirectory(): string {
     return this.skillsDir;
+  }
+
+  private askUser(question: string, options: Array<{ label: string; description?: string }>, allowFreeform: boolean): Promise<string> {
+    const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.pendingQuestions.delete(id); resolve("No answer received; ask again or use a safe explicit assumption."); }, 10 * 60_000);
+      this.pendingQuestions.set(id, { resolve, timer });
+      this.emit("ask_user", { id, question: question.slice(0, 1200), options: options.slice(0, 5), allowFreeform });
+    });
+  }
+
+  answerUserQuestion(id: string, answer: string): void {
+    const pending = this.pendingQuestions.get(id);
+    if (!pending) throw new Error("澄清问题已过期");
+    clearTimeout(pending.timer); this.pendingQuestions.delete(id); pending.resolve(`User clarification: ${answer.trim().slice(0, 4000)}`);
   }
 
   // ---------------------------------------------------------------- agents

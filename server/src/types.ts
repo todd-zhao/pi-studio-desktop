@@ -103,7 +103,8 @@ export type ClientWsMessage =
   | { type: "mcp_command"; command: string }
   | { type: "command"; command: string }
   | { type: "switch_workspace"; path: string }
-  | { type: "add_workspace"; path: string };
+  | { type: "add_workspace"; path: string }
+  | { type: "ask_user_answer"; id: string; answer: string };
 
 // ---- Server -> Client WebSocket messages ----
 export type ServerWsMessage =
@@ -114,7 +115,15 @@ export type ServerWsMessage =
   | { type: "sessions"; sessions: SessionMeta[] }
   | { type: "workspaces"; workspaces: WorkspaceInfo[] }
   | { type: "log"; level: "info" | "warn" | "error"; message: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "ask_user"; question: AskUserQuestion };
+
+export interface AskUserQuestion {
+  id: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  allowFreeform: boolean;
+}
 
 export interface WorkspaceInfo {
   path: string;
