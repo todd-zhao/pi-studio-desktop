@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PiSocket, getGoals, getSubagents, listAgents, listSessions, listWorkspaces, setActiveAgent, setGoals, setSubagents } from "./api";
-import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WorkspaceInfo } from "./types";
+import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
@@ -10,6 +10,7 @@ import { SkillsPanel } from "./components/SkillsPanel";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { TeamPanel } from "./components/TeamPanel";
 import { SchedulesPanel } from "./components/SchedulesPanel";
+import { WechatPanel } from "./components/WechatPanel";
 import { FilePreview } from "./components/FilePreview";
 
 export interface LiveTool {
@@ -30,7 +31,7 @@ export interface RenderedMessage extends ClientMessage {
   toolResults?: Record<string, { text: string; isError: boolean }>;
 }
 
-export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules";
+export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat";
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -62,6 +63,9 @@ export default function App() {
   const [subagentsEnabled, setSubagentsEnabled] = useState(false);
   const [goalsEnabled, setGoalsEnabled] = useState(false);
   const [goalText, setGoalText] = useState("");
+  const [wechatStatus, setWechatStatus] = useState<WechatStatus | null>(null);
+  const [wechatQr, setWechatQr] = useState<WechatQr | null>(null);
+  const [wechatLogs, setWechatLogs] = useState<WechatLogEntry[]>([]);
   const [question, setQuestion] = useState<AskUserQuestion | null>(null);
   const [customAnswer, setCustomAnswer] = useState("");
 
@@ -224,6 +228,16 @@ export default function App() {
           setCustomAnswer("");
           setQuestion(msg.question);
           break;
+        case "wechat_status":
+          setWechatStatus(msg.status);
+          if (msg.status.phase === "connected" || msg.status.phase === "idle") setWechatQr(null);
+          break;
+        case "wechat_qr":
+          setWechatQr(msg.qr);
+          break;
+        case "wechat_log":
+          setWechatLogs((logs) => [...logs.slice(-199), msg.entry]);
+          break;
       }
     });
 
@@ -263,6 +277,10 @@ export default function App() {
 
   const sendToolCommand = useCallback((command: string) => {
     socketRef.current?.send({ type: "mcp_command", command });
+  }, []);
+
+  const sendWechatCommand = useCallback((action: WechatCommandAction) => {
+    socketRef.current?.send({ type: "wechat_command", action });
   }, []);
 
   const switchSession = useCallback((file: string) => {
@@ -401,6 +419,11 @@ export default function App() {
         </div>
       )}
       {panel === "schedules" && <div className="right-panel"><SchedulesPanel agents={agents} onClose={() => setPanel(null)} onToast={toast} /></div>}
+      {panel === "wechat" && (
+        <div className="right-panel wechat-right-panel">
+          <WechatPanel status={wechatStatus} qr={wechatQr} logs={wechatLogs} onCommand={sendWechatCommand} onClose={() => setPanel(null)} />
+        </div>
+      )}
       {preview && (
         <FilePreview
           file={preview}

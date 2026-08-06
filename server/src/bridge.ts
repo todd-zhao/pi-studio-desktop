@@ -21,6 +21,8 @@ import { createMcpAdapter, MCP_STATUS_EVENT } from "pi-mcp-adapter";
 import { Type } from "typebox";
 import type { McpConfig } from "pi-mcp-adapter/types";
 import type { McpStatusSnapshot } from "./types.ts";
+import type { WechatCommandAction } from "./types.ts";
+import { wechatExtension } from "./extensions/wechat.ts";
 import type {
   AppState,
   AgentProfile,
@@ -109,6 +111,9 @@ interface BridgeEvents {
   log: [level: "info" | "warn" | "error", message: string];
   error: [message: string];
   ask_user: [question: import("./types.ts").AskUserQuestion];
+  wechat_status: [status: import("./types.ts").WechatStatus];
+  wechat_qr: [qr: import("./types.ts").WechatQr];
+  wechat_log: [entry: import("./types.ts").WechatLogEntry];
 }
 
 export class PiBridge extends EventEmitter<BridgeEvents> {
@@ -168,6 +173,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.modelRuntime = await ModelRuntime.create();
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
     this.eventBus = createEventBus();
+
+    this.eventBus.on("wechat:status", (status) => this.emit("wechat_status", status as import("./types.ts").WechatStatus));
+    this.eventBus.on("wechat:qr", (qr) => this.emit("wechat_qr", qr as import("./types.ts").WechatQr));
+    this.eventBus.on("wechat:log", (entry) => this.emit("wechat_log", entry as import("./types.ts").WechatLogEntry));
 
     // pi-mcp-adapter publishes a status snapshot on a shared event-bus channel.
     this.eventBus.on(MCP_STATUS_EVENT, (snapshot) => {
@@ -229,7 +238,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           },
           // Passing config programmatically bypasses pi-mcp-adapter host discovery.
           // The wrapper rereads the app file on every resource reload.
-          extensionFactories: [appMcpAdapter, askUserExtension],
+          extensionFactories: [appMcpAdapter, askUserExtension, wechatExtension],
         },
       });
       return {
@@ -774,6 +783,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     }
   }
 
+  async runWechatCommand(action: WechatCommandAction): Promise<void> {
+    const command = action === "reconnect" ? "/wechat reconnect"
+      : action === "disconnect" ? "/wechat disconnect" : "/wechat";
+    await this.runtime.session.prompt(command);
+  }
+
   static commandList(): CommandInfo[] {
     return [
       { name: "/new", description: "新建会话", group: "session" },
@@ -786,6 +801,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       { name: "/mcp disable", description: "禁用某个 MCP 服务", args: "<server>", group: "mcp" },
       { name: "/mcp enable", description: "启用某个 MCP 服务", args: "<server>", group: "mcp" },
       { name: "/mcp logout", description: "清除某个服务的 OAuth 凭据", args: "<server>", group: "mcp" },
+      { name: "/wechat", description: "连接微信对话", args: "[connect|reconnect|disconnect|status]", group: "system" },
+      { name: "/weixin", description: "连接微信对话（别名）", args: "[connect|reconnect|disconnect|status]", group: "system" },
     ];
   }
 

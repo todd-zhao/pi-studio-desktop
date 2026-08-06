@@ -74,6 +74,37 @@ export interface McpStatusSnapshot {
   disabledCount: number;
 }
 
+export type WechatStatusPhase =
+  | "idle"
+  | "connecting"
+  | "qr"
+  | "scanned"
+  | "expired"
+  | "connected"
+  | "error";
+
+export interface WechatStatus {
+  phase: WechatStatusPhase;
+  message?: string;
+  account?: string;
+  timestamp: number;
+}
+
+export interface WechatQr {
+  url: string;
+  data: string;
+  timestamp: number;
+}
+
+export interface WechatLogEntry {
+  id: string;
+  direction: "in" | "out" | "system";
+  text: string;
+  timestamp: number;
+}
+
+export type WechatCommandAction = "connect" | "reconnect" | "disconnect";
+
 export interface AppState {
   messages: ClientMessage[];
   /** Pi SDK (pi-coding-agent) version, e.g. "0.83.0". */
@@ -104,7 +135,8 @@ export type ClientWsMessage =
   | { type: "command"; command: string }
   | { type: "switch_workspace"; path: string }
   | { type: "add_workspace"; path: string }
-  | { type: "ask_user_answer"; id: string; answer: string };
+  | { type: "ask_user_answer"; id: string; answer: string }
+  | { type: "wechat_command"; action: WechatCommandAction };
 
 // ---- Server -> Client WebSocket messages ----
 export type ServerWsMessage =
@@ -116,7 +148,10 @@ export type ServerWsMessage =
   | { type: "workspaces"; workspaces: WorkspaceInfo[] }
   | { type: "log"; level: "info" | "warn" | "error"; message: string }
   | { type: "error"; message: string }
-  | { type: "ask_user"; question: AskUserQuestion };
+  | { type: "ask_user"; question: AskUserQuestion }
+  | { type: "wechat_status"; status: WechatStatus }
+  | { type: "wechat_qr"; qr: WechatQr }
+  | { type: "wechat_log"; entry: WechatLogEntry };
 
 export interface AskUserQuestion {
   id: string;

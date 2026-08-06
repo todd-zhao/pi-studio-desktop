@@ -133,6 +133,7 @@ export function Sidebar(props: Props) {
         <span className="team-entry-arrow">›</span>
       </button>
       <button className={`team-entry-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}><span className="team-entry-icon">◷</span><span>定时任务</span><span className="team-entry-arrow">›</span></button>
+      <button className={`team-entry-btn ${activePanel === "wechat" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "wechat" ? null : "wechat")}><span className="team-entry-icon">◈</span><span>微信对话</span><span className="team-entry-arrow">›</span></button>
 
       <div className="sidebar-section">运行配置</div>
       <div className="sel-row subagents-toggle"><label>多智能体</label><button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button><small>{props.subagentsEnabled ? "已开启" : "关闭"}</small></div>

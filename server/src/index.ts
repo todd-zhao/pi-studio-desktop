@@ -18,6 +18,9 @@ import type {
   McpStatusSnapshot,
   ServerWsMessage,
   SessionMeta,
+  WechatLogEntry,
+  WechatQr,
+  WechatStatus,
   WorkspaceInfo,
 } from "./types.ts";
 
@@ -689,6 +692,9 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
   const onLog = (level: "info" | "warn" | "error", message: string) => send(ws, { type: "log", level, message });
   const onError = (message: string) => send(ws, { type: "error", message });
   const onAskUser = (question: import("./types.ts").AskUserQuestion) => send(ws, { type: "ask_user", question });
+  const onWechatStatus = (status: WechatStatus) => send(ws, { type: "wechat_status", status });
+  const onWechatQr = (qr: WechatQr) => send(ws, { type: "wechat_qr", qr });
+  const onWechatLog = (entry: WechatLogEntry) => send(ws, { type: "wechat_log", entry });
 
   bridge.on("state", onState);
   bridge.on("event", onEvent);
@@ -698,6 +704,9 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
   bridge.on("log", onLog);
   bridge.on("error", onError);
   bridge.on("ask_user", onAskUser);
+  bridge.on("wechat_status", onWechatStatus);
+  bridge.on("wechat_qr", onWechatQr);
+  bridge.on("wechat_log", onWechatLog);
 
   ws.on("close", () => {
     bridge.off("state", onState);
@@ -708,6 +717,9 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
     bridge.off("log", onLog);
     bridge.off("error", onError);
     bridge.off("ask_user", onAskUser);
+    bridge.off("wechat_status", onWechatStatus);
+    bridge.off("wechat_qr", onWechatQr);
+    bridge.off("wechat_log", onWechatLog);
   });
 
   ws.on("message", (raw) => {
@@ -778,6 +790,9 @@ async function handleClientMessage(ws: WebSocket, msg: ClientWsMessage): Promise
         break;
       case "ask_user_answer":
         bridge.answerUserQuestion(msg.id, msg.answer);
+        break;
+      case "wechat_command":
+        await bridge.runWechatCommand(msg.action);
         break;
     }
   } catch (e) {
