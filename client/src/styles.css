@@ -2505,6 +2505,12 @@ body {
   border-color: var(--text-2);
 }
 
+/* The dark theme uses a light filled primary button, so its label must stay dark. */
+:root[data-theme="dark"] .new-session-btn,
+:root:not([data-theme]) .new-session-btn {
+  color: #161616;
+}
+
 .side-tabs {
   padding-inline: 12px;
 }
