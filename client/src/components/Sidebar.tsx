@@ -27,6 +27,7 @@ interface Props {
   onCollapse: () => void;
   subagentsEnabled: boolean;
   onToggleSubagents: (enabled: boolean) => void;
+  goalsEnabled: boolean; goalText: string; onGoalTextChange: (value: string) => void; onToggleGoals: (enabled: boolean) => void;
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -135,6 +136,7 @@ export function Sidebar(props: Props) {
 
       <div className="sidebar-section">运行配置</div>
       <div className="sel-row subagents-toggle"><label>多智能体</label><button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button><small>{props.subagentsEnabled ? "已开启" : "关闭"}</small></div>
+      <div className="goal-control"><div className="sel-row subagents-toggle"><label>长时目标审查</label><button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button><small>{props.goalsEnabled ? "已开启" : "关闭"}</small></div><textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} /></div>
       <div className="sel-row">
         <label>助手</label>
         <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>

@@ -20,6 +20,7 @@
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "multer": "^2.0.1",
+    "pi-goal-list-loop-audit": "^0.34.57",
     "pi-hermes-memory": "^0.9.3",
     "pi-mcp-adapter": "^2.18.0",
     "pi-subagents": "^0.41.0",

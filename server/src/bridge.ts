@@ -131,6 +131,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private readonly agentsFile: string;
   private readonly hermesMemoryExtensionPath: string;
   private readonly subagentsExtensionPath: string;
+  private readonly goalsExtensionPath: string;
+  private goalsEnabled = false;
   private subagentsEnabled = false;
   private agents: AgentProfile[] = [];
   private activeAgentId = "default";
@@ -144,7 +146,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.loadGlobalExtensions = options.loadGlobalExtensions ?? false;
     this.skillsDir = join(this.agentDir, "skills");
     this.subagentsExtensionPath = appRequire.resolve("pi-subagents");
+    this.goalsExtensionPath = appRequire.resolve("pi-goal-list-loop-audit");
     try { this.subagentsEnabled = !!JSON.parse(readFileSync(join(this.agentDir, "subagents.json"), "utf8")).enabled; } catch { /* default off */ }
+    try { this.goalsEnabled = !!JSON.parse(readFileSync(join(this.agentDir, "goals.json"), "utf8")).enabled; } catch { /* default off */ }
     mkdirSync(this.skillsDir, { recursive: true });
     this.agentsFile = join(this.agentDir, "agents.json");
     this.hermesMemoryExtensionPath = appRequire.resolve("pi-hermes-memory");
@@ -209,7 +213,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           // Skills are app-owned; do not inherit host-global or workspace skills.
           noSkills: true,
           additionalSkillPaths: [this.skillsDir],
-          additionalExtensionPaths: [this.hermesMemoryExtensionPath, ...(this.subagentsEnabled ? [this.subagentsExtensionPath] : [])],
+          additionalExtensionPaths: [this.hermesMemoryExtensionPath, ...(this.subagentsEnabled ? [this.subagentsExtensionPath] : []), ...(this.goalsEnabled ? [this.goalsExtensionPath] : [])],
           appendSystemPromptOverride: (base) => {
             const agent = this.getActiveAgent();
             const additions: string[] = [];
@@ -396,6 +400,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     await this.bindSession();
     this.pushState();
   }
+  isGoalsEnabled(): boolean { return this.goalsEnabled; }
+  async setGoalsEnabled(enabled: boolean, goal?: string): Promise<void> { this.goalsEnabled=enabled; writeFileSync(join(this.agentDir,"goals.json"),JSON.stringify({enabled,goal:goal??""},null,2)); await this.runtime.session.reload(); await this.bindSession(); this.pushState(); }
 
   private askUser(question: string, options: Array<{ label: string; description?: string }>, allowFreeform: boolean): Promise<string> {
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

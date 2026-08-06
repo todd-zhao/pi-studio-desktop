@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PiSocket, getSubagents, listAgents, listSessions, listWorkspaces, setActiveAgent, setSubagents } from "./api";
+import { PiSocket, getGoals, getSubagents, listAgents, listSessions, listWorkspaces, setActiveAgent, setGoals, setSubagents } from "./api";
 import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
@@ -60,6 +60,8 @@ export default function App() {
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [queued, setQueued] = useState<{ steering: number; followUp: number } | null>(null);
   const [subagentsEnabled, setSubagentsEnabled] = useState(false);
+  const [goalsEnabled, setGoalsEnabled] = useState(false);
+  const [goalText, setGoalText] = useState("");
   const [question, setQuestion] = useState<AskUserQuestion | null>(null);
   const [customAnswer, setCustomAnswer] = useState("");
 
@@ -227,6 +229,7 @@ export default function App() {
 
     socket.connect();
     void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
+    void getGoals().then((v) => setGoalsEnabled(v.enabled)).catch(() => {});
     // Optional deep-link: ?session=<absolute session file path>
     const deepLink = new URLSearchParams(location.search).get("session");
     if (deepLink) {
@@ -341,6 +344,8 @@ export default function App() {
           }}
           subagentsEnabled={subagentsEnabled}
           onToggleSubagents={(enabled) => void setSubagents(enabled).then((v) => { setSubagentsEnabled(v.enabled); toast("ok", v.enabled ? "多智能体已开启" : "多智能体已关闭"); }).catch((e) => toast("error", e.message))}
+          goalsEnabled={goalsEnabled} goalText={goalText} onGoalTextChange={setGoalText}
+          onToggleGoals={(enabled) => void setGoals(enabled, goalText).then((v) => { setGoalsEnabled(v.enabled); toast("ok", v.enabled ? "目标审查已开启" : "目标审查已关闭"); }).catch((e) => toast("error", e.message))}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>
