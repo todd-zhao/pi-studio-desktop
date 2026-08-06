@@ -1,0 +1,44 @@
+{
+  "name": "pi-studio",
+  "version": "0.1.0",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "description": "Pi Studio — 基于 Pi SDK 的 Codex 风格 Web 前端（含 MCP 支持）",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces --include=dev",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=esm --packages=external --alias:pi-mcp-adapter=./node_modules/pi-mcp-adapter/index.ts --outfile=server/dist/index.mjs",
+    "build:client": "npm run build -w client",
+    "typecheck:client": "tsc -p client/tsconfig.json --noEmit",
+    "typecheck:server": "tsc -p server/tsconfig.json --noEmit",
+    "typecheck": "npm run typecheck:client && npm run typecheck:server",
+    "patch:pi-deps": "node scripts/patch-pi-bundled-deps.cjs",
+    "postinstall": "npm run patch:pi-deps",
+    "check": "npm run typecheck && npm run build:client && npm run build:server",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "build:portable:zip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1 -Zip",
+    "dev:electron": "electron desktop/main.cjs",
+    "build:electron": "node scripts/make-icon.mjs && npm run build:portable && npx electron-builder --win && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/zip-desktop.ps1",
+    "start": "npm run start -w server",
+    "setup": "npm install --workspaces --include=dev && npm run build:client"
+  },
+  "devDependencies": {
+    "@electron/fuses": "^1.8.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "brace-expansion": "5.0.9",
+    "undici": "8.9.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "undici": "8.9.0"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.cache/
+backups/
+team-data/
+data/
+workspace/uploads/
+workspace/.mcp.json
+*.log
+.DS_Store
+
+data/workspaces.json

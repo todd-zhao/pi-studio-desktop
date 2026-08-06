@@ -1,0 +1,36 @@
+appId: com.pi.studio
+productName: Pi Studio
+directories:
+  output: dist/electron
+files:
+  - desktop/main.cjs
+  - desktop/assets/icon.png
+  - desktop/assets/icon.ico
+  - desktop/assets/logo.svg
+  - desktop/assets/pi-studio-logo.png
+  - desktop/assets/pi-studio-logo.ico
+  - desktop/assets/pi-studio-logo.svg
+extraResources:
+  - from: dist/portable/Pi Studio/runtime
+    to: runtime
+  - from: dist/portable/Pi Studio/node_modules
+    to: node_modules
+  - from: dist/portable/Pi Studio/server/dist
+    to: server/dist
+  - from: dist/portable/Pi Studio/client/dist
+    to: client/dist
+npmRebuild: false
+afterPack: scripts/after-pack.cjs
+electronLanguages:
+  - en-US
+  - zh-CN
+win:
+  icon: desktop/assets/pi-studio-logo.ico
+  target:
+    - target: dir
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: Pi Studio 便携版.exe
