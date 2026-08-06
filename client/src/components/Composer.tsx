@@ -12,6 +12,8 @@ interface Props {
   onSend: (text: string, attachments?: AttachmentInfo[], refs?: string[]) => void;
   onAbort: () => void;
   onError: (message: string) => void;
+  oneShot: { subagents: boolean; goals: boolean };
+  onTaskModeChange: (next: { subagents: boolean; goals: boolean }) => void;
 }
 
 interface CompletionItem {
@@ -57,7 +59,7 @@ function extractRefs(text: string): string[] {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { isStreaming, modelName, onSend, onAbort, onError }: Props,
+  { isStreaming, modelName, onSend, onAbort, onError, oneShot, onTaskModeChange }: Props,
   ref,
 ) {
   const visibleModelName = modelName && !/^unknown(?:[/]unknown)?$/i.test(modelName) ? modelName : "";
@@ -65,6 +67,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [uploading, setUploading] = useState(false);
   const [completion, setCompletion] = useState<CompletionState | null>(null);
+  const [taskModeOpen, setTaskModeOpen] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -282,6 +285,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     setText("");
     setAttachments([]);
     setCompletion(null);
+    setTaskModeOpen(false);
     if (taRef.current) taRef.current.style.height = "auto";
   };
 
@@ -345,6 +349,26 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               e.target.value = "";
             }}
           />
+          <button
+            className={`icon-btn task-mode-btn${oneShot.subagents || oneShot.goals ? " active" : ""}`}
+            title="任务模式"
+            onClick={() => setTaskModeOpen((v) => !v)}
+          >
+            ⚡
+          </button>
+          {taskModeOpen && <div className="task-mode-veil" onClick={() => setTaskModeOpen(false)} />}
+          {taskModeOpen && (
+            <div className="task-mode-pop">
+              <div className="task-mode-row">
+                <span>多智能体</span>
+                <button className={`toggle-switch ${oneShot.subagents ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, subagents: !oneShot.subagents })} aria-pressed={oneShot.subagents}><span /></button>
+              </div>
+              <div className="task-mode-row">
+                <span>长时任务</span>
+                <button className={`toggle-switch ${oneShot.goals ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, goals: !oneShot.goals })} aria-pressed={oneShot.goals}><span /></button>
+              </div>
+            </div>
+          )}
           <button className="icon-btn" title="上传文件/图片" disabled={uploading} onClick={() => fileRef.current?.click()}>
             {uploading ? <span className="spinner" /> : "📎"}
           </button>

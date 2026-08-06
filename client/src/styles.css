@@ -1138,6 +1138,51 @@ button {
   color: var(--text-3);
 }
 
+.task-mode-btn {
+  position: relative;
+}
+
+.task-mode-btn.active {
+  color: var(--text);
+  background: var(--bg-4);
+  border-color: var(--border-hover);
+}
+
+.task-mode-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.task-mode-pop {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% + 10px);
+  z-index: 50;
+  width: 230px;
+  padding: 10px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.task-mode-row > span:first-child {
+  flex: 1;
+}
+
 .icon-btn {
   width: 32px;
   height: 32px;
@@ -2433,6 +2478,13 @@ body {
 .settings-actions .mini-btn {
   flex: 1;
   padding: 6px 8px;
+}
+
+.settings-goal-label {
+  display: block;
+  margin: 8px 2px 6px;
+  font-size: 11px;
+  color: var(--text-3);
 }
 
 .team-entry-btn {

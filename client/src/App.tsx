@@ -66,6 +66,7 @@ export default function App() {
   const [wechatStatus, setWechatStatus] = useState<WechatStatus | null>(null);
   const [wechatQr, setWechatQr] = useState<WechatQr | null>(null);
   const [wechatLogs, setWechatLogs] = useState<WechatLogEntry[]>([]);
+  const [oneShot, setOneShot] = useState<{ subagents: boolean; goals: boolean }>({ subagents: false, goals: false });
   const [question, setQuestion] = useState<AskUserQuestion | null>(null);
   const [customAnswer, setCustomAnswer] = useState("");
 
@@ -74,6 +75,15 @@ export default function App() {
   const toastId = useRef(0);
   const stateRef = useRef<AppState | null>(null);
   const liveToolsRef = useRef<LiveTool[]>([]);
+  const restoreRef = useRef<{ subagents: boolean; goals: boolean }>({ subagents: false, goals: false });
+  const subagentsEnabledRef = useRef(subagentsEnabled);
+  subagentsEnabledRef.current = subagentsEnabled;
+  const goalsEnabledRef = useRef(goalsEnabled);
+  goalsEnabledRef.current = goalsEnabled;
+  const goalTextRef = useRef(goalText);
+  goalTextRef.current = goalText;
+  const oneShotRef = useRef(oneShot);
+  oneShotRef.current = oneShot;
   stateRef.current = state;
 
   const toast = useCallback((level: Toast["level"], message: string) => {
@@ -89,6 +99,20 @@ export default function App() {
     liveToolsRef.current = [];
     setQueued(null);
   }, []);
+
+  const restoreOneShot = useCallback(() => {
+    const restore = restoreRef.current;
+    if (restore.subagents) {
+      restore.subagents = false;
+      setSubagentsEnabled(false);
+      void setSubagents(false).catch((e) => toast("error", e.message));
+    }
+    if (restore.goals) {
+      restore.goals = false;
+      setGoalsEnabled(false);
+      void setGoals(false, goalTextRef.current).catch((e) => toast("error", e.message));
+    }
+  }, [toast]);
 
   const handleEvent = useCallback(
     (event: unknown) => {
@@ -146,6 +170,7 @@ export default function App() {
         }
         case "agent_end":
         case "agent_settled":
+          restoreOneShot();
           resetLive();
           break;
         case "auto_retry_start":
@@ -156,7 +181,7 @@ export default function App() {
           break;
       }
     },
-    [resetLive, toast],
+    [resetLive, restoreOneShot, toast],
   );
 
   const applyState = useCallback((s: AppState) => {
@@ -269,10 +294,27 @@ export default function App() {
   }, []);
 
   const send = useCallback(
-    (text: string, attachments?: AttachmentInfo[]) => {
+    async (text: string, attachments?: AttachmentInfo[]) => {
+      const one = oneShotRef.current;
+      try {
+        if (one.subagents && !subagentsEnabledRef.current) {
+          restoreRef.current.subagents = true;
+          await setSubagents(true);
+          setSubagentsEnabled(true);
+        }
+        if (one.goals && !goalsEnabledRef.current) {
+          restoreRef.current.goals = true;
+          await setGoals(true, goalTextRef.current);
+          setGoalsEnabled(true);
+        }
+      } catch (e) {
+        toast("error", (e as Error).message);
+        return;
+      }
+      if (one.subagents || one.goals) setOneShot({ subagents: false, goals: false });
       socketRef.current?.send({ type: "prompt", text, attachments });
     },
-    [],
+    [toast],
   );
 
   const sendToolCommand = useCallback((command: string) => {
@@ -325,6 +367,8 @@ export default function App() {
         onSend={send}
         onAbort={() => socketRef.current?.send({ type: "abort" })}
         onError={(m) => toast("error", m)}
+        oneShot={oneShot}
+        onTaskModeChange={(next) => setOneShot(next)}
       />
     </>
   );
@@ -360,12 +404,8 @@ export default function App() {
           onSetAgent={(id) => {
             void setActiveAgent(id).catch((e) => toast("error", e.message));
           }}
-          subagentsEnabled={subagentsEnabled}
-          onToggleSubagents={(enabled) => void setSubagents(enabled).then((v) => { setSubagentsEnabled(v.enabled); toast("ok", v.enabled ? "多智能体已开启" : "多智能体已关闭"); }).catch((e) => toast("error", e.message))}
-          goalsEnabled={goalsEnabled} goalText={goalText} onGoalTextChange={setGoalText}
+          goalText={goalText} onGoalTextChange={setGoalText}
           onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
-          onToggleGoals={(enabled) => void setGoals(enabled, goalText).then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); toast("ok", v.enabled ? "目标审查已开启" : "目标审查已关闭"); }).catch((e) => toast("error", e.message))}
-          wechatStatus={wechatStatus}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { AgentProfile, AppState, SessionMeta, WechatStatus, WorkspaceInfo } from "../types";
+import type { AgentProfile, AppState, SessionMeta, WorkspaceInfo } from "../types";
 import type { PanelTab } from "../App";
 import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
@@ -25,25 +25,12 @@ interface Props {
   onPickFile: (relPath: string, name: string) => void;
   onPreviewFile: (relPath: string, name: string) => void;
   onCollapse: () => void;
-  subagentsEnabled: boolean;
-  onToggleSubagents: (enabled: boolean) => void;
-  goalsEnabled: boolean; goalText: string; onGoalTextChange: (value: string) => void; onSaveGoalText: (value: string) => void; onToggleGoals: (enabled: boolean) => void;
-  wechatStatus: WechatStatus | null;
+  goalText: string; onGoalTextChange: (value: string) => void; onSaveGoalText: (value: string) => void;
 }
 
-type SettingsSectionId = "runtime" | "models" | "advanced" | "extensions" | "wechat";
+type SettingsSectionId = "runtime" | "models" | "advanced" | "extensions";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-const WECHAT_PHASE_LABEL: Record<WechatStatus["phase"], string> = {
-  idle: "未连接",
-  connecting: "连接中",
-  qr: "等待扫码",
-  scanned: "已扫码",
-  expired: "二维码过期",
-  connected: "已连接",
-  error: "连接异常",
-};
 
 function fmtTime(ts?: number): string {
   if (!ts) return "";
@@ -103,7 +90,6 @@ export function Sidebar(props: Props) {
   const mcp = state?.mcp;
   const mcpServers = mcp?.servers ?? [];
   const connectedCount = mcp?.connectedCount ?? 0;
-  const wechatPhase = props.wechatStatus?.phase ?? "idle";
 
   const toggleSettings = () => {
     const next = !settingsOpen;
@@ -320,21 +306,11 @@ export function Sidebar(props: Props) {
               <SettingsGroup
                 id="advanced"
                 title="高级配置"
-                badge={props.subagentsEnabled || props.goalsEnabled ? "已启用" : "关闭"}
                 open={settingsSection === "advanced"}
                 onToggle={toggleSettingsSection}
               >
-                <div className="sel-row subagents-toggle">
-                  <label>多智能体</label>
-                  <button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button>
-                  <small>{props.subagentsEnabled ? "已开启" : "关闭"}</small>
-                </div>
                 <div className="goal-control">
-                  <div className="sel-row subagents-toggle">
-                    <label>长时目标审查</label>
-                    <button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button>
-                    <small>{props.goalsEnabled ? "已开启" : "关闭"}</small>
-                  </div>
+                  <label className="settings-goal-label">长时目标</label>
                   <textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} />
                 </div>
               </SettingsGroup>
@@ -349,23 +325,6 @@ export function Sidebar(props: Props) {
                 <div className="settings-actions">
                   <button className="mini-btn" onClick={() => openPanel("mcp")}>MCP 管理</button>
                   <button className="mini-btn" onClick={() => openPanel("skills")}>Skills</button>
-                </div>
-              </SettingsGroup>
-
-              <SettingsGroup
-                id="wechat"
-                title="微信连接"
-                badge={WECHAT_PHASE_LABEL[wechatPhase]}
-                open={settingsSection === "wechat"}
-                onToggle={toggleSettingsSection}
-              >
-                <div className="settings-status">
-                  <span>连接状态</span>
-                  <span className="settings-current">{WECHAT_PHASE_LABEL[wechatPhase]}</span>
-                  {props.wechatStatus?.account && <code className="settings-current">{props.wechatStatus.account}</code>}
-                </div>
-                <div className="settings-actions">
-                  <button className="mini-btn primary" onClick={() => openPanel("wechat")}>打开微信连接</button>
                 </div>
               </SettingsGroup>
             </div>
