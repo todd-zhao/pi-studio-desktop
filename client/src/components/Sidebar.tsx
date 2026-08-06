@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { AgentProfile, AppState, SessionMeta, WorkspaceInfo } from "../types";
+import { useState, type ReactNode } from "react";
+import type { AgentProfile, AppState, SessionMeta, WechatStatus, WorkspaceInfo } from "../types";
 import type { PanelTab } from "../App";
 import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
@@ -28,9 +28,22 @@ interface Props {
   subagentsEnabled: boolean;
   onToggleSubagents: (enabled: boolean) => void;
   goalsEnabled: boolean; goalText: string; onGoalTextChange: (value: string) => void; onSaveGoalText: (value: string) => void; onToggleGoals: (enabled: boolean) => void;
+  wechatStatus: WechatStatus | null;
 }
 
+type SettingsSectionId = "runtime" | "models" | "advanced" | "extensions" | "wechat";
+
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+const WECHAT_PHASE_LABEL: Record<WechatStatus["phase"], string> = {
+  idle: "未连接",
+  connecting: "连接中",
+  qr: "等待扫码",
+  scanned: "已扫码",
+  expired: "二维码过期",
+  connected: "已连接",
+  error: "连接异常",
+};
 
 function fmtTime(ts?: number): string {
   if (!ts) return "";
@@ -43,15 +56,41 @@ function fmtTime(ts?: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+interface SettingsGroupProps {
+  id: SettingsSectionId;
+  title: string;
+  badge?: string;
+  open: boolean;
+  onToggle: (id: SettingsSectionId) => void;
+  children: ReactNode;
+}
+
+function SettingsGroup({ id, title, badge, open, onToggle, children }: SettingsGroupProps) {
+  return (
+    <div className={`settings-group${open ? " open" : ""}`}>
+      <button className="settings-group-head" onClick={() => onToggle(id)} aria-expanded={open}>
+        <span className="settings-caret">▸</span>
+        <span className="settings-group-title">{title}</span>
+        {badge && <span className="settings-group-badge">{badge}</span>}
+      </button>
+      {open && <div className="settings-group-body">{children}</div>}
+    </div>
+  );
+}
+
 export function Sidebar(props: Props) {
   const { state, sessions, workspaces, agents, connected, activePanel, theme } = props;
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
 
   const models = state?.availableModels ?? [];
   const current = state?.model;
   const currentKey = current ? `${current.provider}/${current.id}` : "";
+  const currentModelName = current?.displayName && !/^unknown(?:[/]unknown)?$/i.test(current.displayName)
+    ? current.displayName
+    : "";
 
   // group models by provider
   const groups = new Map<string, typeof models>();
@@ -64,6 +103,22 @@ export function Sidebar(props: Props) {
   const mcp = state?.mcp;
   const mcpServers = mcp?.servers ?? [];
   const connectedCount = mcp?.connectedCount ?? 0;
+  const wechatPhase = props.wechatStatus?.phase ?? "idle";
+
+  const toggleSettings = () => {
+    const next = !settingsOpen;
+    setSettingsOpen(next);
+    if (next) setSettingsSection((s) => s ?? "runtime");
+  };
+
+  const openPanel = (tab: PanelTab) => {
+    props.onPanel(tab);
+    setSettingsOpen(false);
+  };
+
+  const toggleSettingsSection = (id: SettingsSectionId) => {
+    setSettingsSection((current) => (current === id ? null : id));
+  };
 
   return (
     <div className="sidebar">
@@ -81,6 +136,9 @@ export function Sidebar(props: Props) {
               onClick={props.onToggleTheme}
             >
               {theme === "dark" ? "☀" : "☾"}
+            </button>
+            <button className={`icon-btn header-icon-btn${settingsOpen ? " active" : ""}`} title="设置" onClick={toggleSettings}>
+              ⚙
             </button>
           </div>
         </div>
@@ -119,81 +177,6 @@ export function Sidebar(props: Props) {
         </button>
       </div>
 
-      <div className="sidebar-section">运行配置</div>
-      <div className="sel-row">
-        <label>助手</label>
-        <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>
-          {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-        </select>
-        <button className="icon-btn row-action-btn" title="Agent 管理" onClick={() => props.onPanel(activePanel === "agents" ? null : "agents")}>•••</button>
-      </div>
-      <div className="sel-row">
-        <label>模型</label>
-        <select
-          value={currentKey}
-          onChange={(e) => {
-            const [provider, ...rest] = e.target.value.split("/");
-            const id = rest.join("/");
-            if (provider && id) props.onSetModel(provider, id);
-          }}
-        >
-          {currentKey === "" && <option value="">（默认）</option>}
-          {[...groups.entries()].map(([provider, list]) => (
-            <optgroup key={provider} label={provider}>
-              {list.map((m) => (
-                <option key={`${provider}/${m.id}`} value={`${provider}/${m.id}`}>
-                  {m.id}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
-      <div className="sel-row">
-        <label>思考</label>
-        <select
-          value={state?.thinkingLevel ?? "off"}
-          onChange={(e) => props.onSetThinking(e.target.value)}
-        >
-          {THINKING_LEVELS.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
-      </div>
-      <button className="new-session-btn" onClick={props.onNewSession}>
-        <span>＋</span> 新会话
-      </button>
-
-      <div className="advanced-config">
-        <button
-          className={`advanced-toggle${showAdvanced ? " open" : ""}`}
-          onClick={() => setShowAdvanced((v) => !v)}
-          aria-expanded={showAdvanced}
-        >
-          <span className="advanced-caret">▸</span>
-          <span>高级配置</span>
-        </button>
-        {showAdvanced && (
-          <div className="advanced-body">
-            <div className="sel-row subagents-toggle">
-              <label>多智能体</label>
-              <button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button>
-              <small>{props.subagentsEnabled ? "已开启" : "关闭"}</small>
-            </div>
-            <div className="goal-control">
-              <div className="sel-row subagents-toggle">
-                <label>长时目标审查</label>
-                <button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button>
-                <small>{props.goalsEnabled ? "已开启" : "关闭"}</small>
-              </div>
-              <textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} />
-            </div>
-          </div>
-        )}
-      </div>
-
       {showDirPicker && (
         <DirPicker
           initialPath={state?.cwd}
@@ -207,8 +190,12 @@ export function Sidebar(props: Props) {
       )}
 
       <div className="browse-area">
-        <div className="sidebar-section">
-          浏览 <span className="section-action" title="刷新会话列表" onClick={props.onRefreshSessions}>↻</span>
+        <div className="sidebar-section browse-head">
+          <span>浏览</span>
+          <span className="browse-actions">
+            <button className="icon-btn browse-action-btn" title="新会话" onClick={props.onNewSession}>＋</button>
+            <button className="icon-btn browse-action-btn" title="刷新会话列表" onClick={props.onRefreshSessions}>↻</button>
+          </span>
         </div>
         <div className="side-tabs">
           <div className={`side-tab ${sideTab === "sessions" ? "active" : ""}`} onClick={() => setSideTab("sessions")}>
@@ -261,20 +248,130 @@ export function Sidebar(props: Props) {
         </button>
       </div>
 
-      <div className="sidebar-mcp">
-        <div className="mcp-head-row">
-          <span className="mcp-title">扩展</span>
-          <span className="mcp-status">MCP {connectedCount}/{mcpServers.length}</span>
+      {settingsOpen && (
+        <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}>
+          <div className="settings-sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="设置">
+            <div className="settings-head">
+              <span className="panel-title">设置</span>
+              <button className="icon-btn" title="关闭设置" onClick={() => setSettingsOpen(false)}>×</button>
+            </div>
+            <div className="settings-accordion">
+              <SettingsGroup id="runtime" title="运行设置" open={settingsSection === "runtime"} onToggle={toggleSettingsSection}>
+                <div className="sel-row">
+                  <label>助手</label>
+                  <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>
+                    {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                  </select>
+                  <button className="icon-btn row-action-btn" title="Agent 管理" onClick={() => openPanel("agents")}>•••</button>
+                </div>
+                <div className="sel-row">
+                  <label>模型</label>
+                  <select
+                    value={currentKey}
+                    onChange={(e) => {
+                      const [provider, ...rest] = e.target.value.split("/");
+                      const id = rest.join("/");
+                      if (provider && id) props.onSetModel(provider, id);
+                    }}
+                  >
+                    {currentKey === "" && <option value="">（默认）</option>}
+                    {[...groups.entries()].map(([provider, list]) => (
+                      <optgroup key={provider} label={provider}>
+                        {list.map((m) => (
+                          <option key={`${provider}/${m.id}`} value={`${provider}/${m.id}`}>
+                            {m.id}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div className="sel-row">
+                  <label>思考</label>
+                  <select
+                    value={state?.thinkingLevel ?? "off"}
+                    onChange={(e) => props.onSetThinking(e.target.value)}
+                  >
+                    {THINKING_LEVELS.map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                id="models"
+                title="模型管理"
+                badge={currentModelName || currentKey || "默认"}
+                open={settingsSection === "models"}
+                onToggle={toggleSettingsSection}
+              >
+                <div className="settings-status">
+                  <span>当前模型</span>
+                  <span className="settings-current">{currentModelName || currentKey || "默认"}</span>
+                </div>
+                <div className="settings-actions">
+                  <button className="mini-btn primary" onClick={() => openPanel("models")}>打开模型管理</button>
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                id="advanced"
+                title="高级配置"
+                badge={props.subagentsEnabled || props.goalsEnabled ? "已启用" : "关闭"}
+                open={settingsSection === "advanced"}
+                onToggle={toggleSettingsSection}
+              >
+                <div className="sel-row subagents-toggle">
+                  <label>多智能体</label>
+                  <button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button>
+                  <small>{props.subagentsEnabled ? "已开启" : "关闭"}</small>
+                </div>
+                <div className="goal-control">
+                  <div className="sel-row subagents-toggle">
+                    <label>长时目标审查</label>
+                    <button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button>
+                    <small>{props.goalsEnabled ? "已开启" : "关闭"}</small>
+                  </div>
+                  <textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} />
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                id="extensions"
+                title="扩展配置"
+                badge={`MCP ${connectedCount}/${mcpServers.length}`}
+                open={settingsSection === "extensions"}
+                onToggle={toggleSettingsSection}
+              >
+                <div className="settings-actions">
+                  <button className="mini-btn" onClick={() => openPanel("mcp")}>MCP 管理</button>
+                  <button className="mini-btn" onClick={() => openPanel("skills")}>Skills</button>
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                id="wechat"
+                title="微信连接"
+                badge={WECHAT_PHASE_LABEL[wechatPhase]}
+                open={settingsSection === "wechat"}
+                onToggle={toggleSettingsSection}
+              >
+                <div className="settings-status">
+                  <span>连接状态</span>
+                  <span className="settings-current">{WECHAT_PHASE_LABEL[wechatPhase]}</span>
+                  {props.wechatStatus?.account && <code className="settings-current">{props.wechatStatus.account}</code>}
+                </div>
+                <div className="settings-actions">
+                  <button className="mini-btn primary" onClick={() => openPanel("wechat")}>打开微信连接</button>
+                </div>
+              </SettingsGroup>
+            </div>
+          </div>
         </div>
-        <div className="mcp-actions">
-          <button className="mini-btn" onClick={() => props.onPanel(activePanel === "mcp" ? null : "mcp")}>
-            MCP
-          </button>
-          <button className="mini-btn" onClick={() => props.onPanel(activePanel === "skills" ? null : "skills")}>
-            Skills
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

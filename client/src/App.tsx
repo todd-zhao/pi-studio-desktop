@@ -365,6 +365,7 @@ export default function App() {
           goalsEnabled={goalsEnabled} goalText={goalText} onGoalTextChange={setGoalText}
           onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
           onToggleGoals={(enabled) => void setGoals(enabled, goalText).then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); toast("ok", v.enabled ? "目标审查已开启" : "目标审查已关闭"); }).catch((e) => toast("error", e.message))}
+          wechatStatus={wechatStatus}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>
