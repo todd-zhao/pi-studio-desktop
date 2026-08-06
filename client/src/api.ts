@@ -258,8 +258,8 @@ export const setScheduleEnabled = (id:string, enabled:boolean) => json<Scheduled
 export const removeSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}`,{method:"DELETE"});
 export const getSubagents = () => json<{enabled:boolean}>("/api/subagents");
 export const setSubagents = (enabled:boolean) => json<{enabled:boolean}>("/api/subagents",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
-export const getGoals = () => json<{enabled:boolean}>("/api/goals");
-export const setGoals = (enabled:boolean, goal:string) => json<{enabled:boolean}>("/api/goals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,goal})});
+export const getGoals = () => json<{enabled:boolean;goal:string}>("/api/goals");
+export const setGoals = (enabled:boolean, goal:string) => json<{enabled:boolean;goal:string}>("/api/goals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,goal})});
 
 export async function getEnvironment(): Promise<{ home?: string; username?: string }> {
   return json("/api/env");

@@ -229,7 +229,7 @@ export default function App() {
 
     socket.connect();
     void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
-    void getGoals().then((v) => setGoalsEnabled(v.enabled)).catch(() => {});
+    void getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {});
     // Optional deep-link: ?session=<absolute session file path>
     const deepLink = new URLSearchParams(location.search).get("session");
     if (deepLink) {
@@ -345,7 +345,8 @@ export default function App() {
           subagentsEnabled={subagentsEnabled}
           onToggleSubagents={(enabled) => void setSubagents(enabled).then((v) => { setSubagentsEnabled(v.enabled); toast("ok", v.enabled ? "多智能体已开启" : "多智能体已关闭"); }).catch((e) => toast("error", e.message))}
           goalsEnabled={goalsEnabled} goalText={goalText} onGoalTextChange={setGoalText}
-          onToggleGoals={(enabled) => void setGoals(enabled, goalText).then((v) => { setGoalsEnabled(v.enabled); toast("ok", v.enabled ? "目标审查已开启" : "目标审查已关闭"); }).catch((e) => toast("error", e.message))}
+          onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
+          onToggleGoals={(enabled) => void setGoals(enabled, goalText).then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); toast("ok", v.enabled ? "目标审查已开启" : "目标审查已关闭"); }).catch((e) => toast("error", e.message))}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>

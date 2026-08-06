@@ -10,3 +10,4 @@ workspace/.mcp.json
 .DS_Store
 
 data/workspaces.json
+.desktop-package-stage/
