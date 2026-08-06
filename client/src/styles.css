@@ -1138,6 +1138,12 @@ button {
   color: var(--text-3);
 }
 
+.task-mode-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
+
 .task-mode-btn {
   position: relative;
 }
@@ -1156,8 +1162,8 @@ button {
 
 .task-mode-pop {
   position: absolute;
-  left: 8px;
-  bottom: calc(100% + 10px);
+  right: 0;
+  bottom: calc(100% + 8px);
   z-index: 50;
   width: 230px;
   padding: 10px;
@@ -1181,6 +1187,26 @@ button {
 
 .task-mode-row > span:first-child {
   flex: 1;
+}
+
+.task-mode-goal {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 4px;
+  padding: 7px;
+  box-sizing: border-box;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  resize: vertical;
+}
+
+.task-mode-goal:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .icon-btn {
@@ -2478,13 +2504,6 @@ body {
 .settings-actions .mini-btn {
   flex: 1;
   padding: 6px 8px;
-}
-
-.settings-goal-label {
-  display: block;
-  margin: 8px 2px 6px;
-  font-size: 11px;
-  color: var(--text-3);
 }
 
 .team-entry-btn {

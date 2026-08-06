@@ -14,6 +14,9 @@ interface Props {
   onError: (message: string) => void;
   oneShot: { subagents: boolean; goals: boolean };
   onTaskModeChange: (next: { subagents: boolean; goals: boolean }) => void;
+  goalText: string;
+  onGoalTextChange: (value: string) => void;
+  onSaveGoalText: (value: string) => void;
 }
 
 interface CompletionItem {
@@ -59,7 +62,7 @@ function extractRefs(text: string): string[] {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { isStreaming, modelName, onSend, onAbort, onError, oneShot, onTaskModeChange }: Props,
+  { isStreaming, modelName, onSend, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
   ref,
 ) {
   const visibleModelName = modelName && !/^unknown(?:[/]unknown)?$/i.test(modelName) ? modelName : "";
@@ -349,26 +352,39 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               e.target.value = "";
             }}
           />
-          <button
-            className={`icon-btn task-mode-btn${oneShot.subagents || oneShot.goals ? " active" : ""}`}
-            title="任务模式"
-            onClick={() => setTaskModeOpen((v) => !v)}
-          >
-            ⚡
-          </button>
-          {taskModeOpen && <div className="task-mode-veil" onClick={() => setTaskModeOpen(false)} />}
-          {taskModeOpen && (
-            <div className="task-mode-pop">
-              <div className="task-mode-row">
-                <span>多智能体</span>
-                <button className={`toggle-switch ${oneShot.subagents ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, subagents: !oneShot.subagents })} aria-pressed={oneShot.subagents}><span /></button>
+          <div className="task-mode-wrap">
+            <button
+              className={`icon-btn task-mode-btn${oneShot.subagents || oneShot.goals ? " active" : ""}`}
+              title="任务模式"
+              onClick={() => setTaskModeOpen((v) => !v)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+                <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8Z" />
+              </svg>
+            </button>
+            {taskModeOpen && <div className="task-mode-veil" onClick={() => setTaskModeOpen(false)} />}
+            {taskModeOpen && (
+              <div className="task-mode-pop">
+                <div className="task-mode-row">
+                  <span>多智能体</span>
+                  <button className={`toggle-switch ${oneShot.subagents ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, subagents: !oneShot.subagents })} aria-pressed={oneShot.subagents}><span /></button>
+                </div>
+                <div className="task-mode-row">
+                  <span>长时任务</span>
+                  <button className={`toggle-switch ${oneShot.goals ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, goals: !oneShot.goals })} aria-pressed={oneShot.goals}><span /></button>
+                </div>
+                {oneShot.goals && (
+                  <textarea
+                    className="task-mode-goal"
+                    value={goalText}
+                    placeholder="设定长时目标，例如：完成登录重构并通过完整测试"
+                    onChange={(e) => onGoalTextChange(e.target.value)}
+                    onBlur={(e) => onSaveGoalText(e.currentTarget.value)}
+                  />
+                )}
               </div>
-              <div className="task-mode-row">
-                <span>长时任务</span>
-                <button className={`toggle-switch ${oneShot.goals ? "on" : ""}`} onClick={() => onTaskModeChange({ ...oneShot, goals: !oneShot.goals })} aria-pressed={oneShot.goals}><span /></button>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
           <button className="icon-btn" title="上传文件/图片" disabled={uploading} onClick={() => fileRef.current?.click()}>
             {uploading ? <span className="spinner" /> : "📎"}
           </button>

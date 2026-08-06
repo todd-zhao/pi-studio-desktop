@@ -369,6 +369,9 @@ export default function App() {
         onError={(m) => toast("error", m)}
         oneShot={oneShot}
         onTaskModeChange={(next) => setOneShot(next)}
+        goalText={goalText}
+        onGoalTextChange={setGoalText}
+        onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
       />
     </>
   );
@@ -404,8 +407,6 @@ export default function App() {
           onSetAgent={(id) => {
             void setActiveAgent(id).catch((e) => toast("error", e.message));
           }}
-          goalText={goalText} onGoalTextChange={setGoalText}
-          onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>

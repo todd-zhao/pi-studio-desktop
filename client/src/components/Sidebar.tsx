@@ -25,10 +25,9 @@ interface Props {
   onPickFile: (relPath: string, name: string) => void;
   onPreviewFile: (relPath: string, name: string) => void;
   onCollapse: () => void;
-  goalText: string; onGoalTextChange: (value: string) => void; onSaveGoalText: (value: string) => void;
 }
 
-type SettingsSectionId = "runtime" | "models" | "advanced" | "extensions";
+type SettingsSectionId = "runtime" | "models" | "extensions";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -300,18 +299,6 @@ export function Sidebar(props: Props) {
                 </div>
                 <div className="settings-actions">
                   <button className="mini-btn primary" onClick={() => openPanel("models")}>打开模型管理</button>
-                </div>
-              </SettingsGroup>
-
-              <SettingsGroup
-                id="advanced"
-                title="高级配置"
-                open={settingsSection === "advanced"}
-                onToggle={toggleSettingsSection}
-              >
-                <div className="goal-control">
-                  <label className="settings-goal-label">长时目标</label>
-                  <textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} />
                 </div>
               </SettingsGroup>
 
