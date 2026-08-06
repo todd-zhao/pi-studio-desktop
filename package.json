@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "desktop/main.cjs",
   "description": "Pi Studio — 基于 Pi SDK 的 Codex 风格 Web 前端（含 MCP 支持）",
