@@ -64,15 +64,32 @@ mkdirSync(join(WORKSPACE, "uploads"), { recursive: true });
 
 // ------------------------------------------------------------------ bridge
 
+const startupStartedAt = Date.now();
+function startupLog(phase: string, details = ""): void {
+  const suffix = details ? ` ${details}` : "";
+  console.log(`[startup +${Date.now() - startupStartedAt}ms] ${phase}${suffix}`);
+}
+
 let bridge!: PiBridge;
 let scheduler!: Scheduler;
 let PiBridgeClass!: typeof import("./bridge.ts").PiBridge;
 let resolveBridgeReady!: (value: PiBridge) => void;
 let rejectBridgeReady!: (reason: unknown) => void;
-const bridgeReady = new Promise<PiBridge>((resolveReady, rejectReady) => {
-  resolveBridgeReady = resolveReady;
-  rejectBridgeReady = rejectReady;
-});
+let bridgeReady!: Promise<PiBridge>;
+let bridgeStarting = false;
+let bootState: "booting" | "ready" | "error" = "booting";
+let bootError = "";
+let initialSessions: SessionMeta[] = [];
+let initialWorkspaces: WorkspaceInfo[] = [];
+
+function resetBridgeReady(): void {
+  bridgeReady = new Promise<PiBridge>((resolveReady, rejectReady) => {
+    resolveBridgeReady = resolveReady;
+    rejectBridgeReady = rejectReady;
+  });
+}
+
+resetBridgeReady();
 
 // Workspace for uploads is tied to the *current* bridge cwd; recompute per request.
 function uploadRoot(): string {
@@ -130,7 +147,22 @@ app.use("/api", (req, res, next) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ready: Boolean(bridge) });
+  res.json({ ok: true, ready: bootState === "ready", booting: bootState === "booting", error: bootError || undefined });
+});
+
+// This route intentionally sits before the bridge-ready gate so the renderer
+// can recover from an initialization failure without restarting Electron.
+app.post("/api/runtime/retry", async (_req, res) => {
+  if (bootState === "booting") {
+    res.status(202).json({ ok: true, state: bootState });
+    return;
+  }
+  await startBridge();
+  res.status(bootState === "ready" ? 200 : 503).json({
+    ok: bootState === "ready",
+    state: bootState,
+    error: bootError || undefined,
+  });
 });
 
 // Serve the application shell immediately while the heavier Pi runtime starts.
@@ -680,9 +712,24 @@ function broadcast(msg: ServerWsMessage): void {
 }
 
 async function attachWebSocket(ws: WebSocket): Promise<void> {
-  await bridgeReady;
-  send(ws, { type: "ready", state: bridge.getState() });
-  send(ws, { type: "workspaces", workspaces: bridge.listWorkspaces() });
+  const waitingForBoot = bootState === "booting";
+  if (waitingForBoot) {
+    send(ws, { type: "booting", phase: "starting", message: "AI engine initializing" });
+  }
+  try {
+    await bridgeReady;
+  } catch (error) {
+    send(ws, { type: "boot_error", message: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  if (!waitingForBoot) {
+    send(ws, {
+      type: "ready",
+      state: bridge.getState(),
+      sessions: initialSessions,
+      workspaces: initialWorkspaces,
+    });
+  }
 
   const onState = (state: AppState) => send(ws, { type: "state", state });
   const onEvent = (event: unknown) => send(ws, { type: "event", event });
@@ -736,7 +783,6 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
 wss.on("connection", (ws) => {
   void attachWebSocket(ws).catch((error) => {
     send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
-    ws.close(1011, "Pi runtime failed to initialize");
   });
 });
 
@@ -802,7 +848,74 @@ async function handleClientMessage(ws: WebSocket, msg: ClientWsMessage): Promise
 
 // -------------------------------------------------------------------- start
 
+async function startBridge(): Promise<void> {
+  if (bridgeStarting) {
+    await bridgeReady.catch(() => undefined);
+    return;
+  }
+  bridgeStarting = true;
+  bootState = "booting";
+  bootError = "";
+  initialSessions = [];
+  initialWorkspaces = [];
+  resetBridgeReady();
+  broadcast({ type: "booting", phase: "starting", message: "AI engine initializing" });
+  startupLog("bridge-start");
+
+  let nextBridge: PiBridge | undefined;
+  try {
+    startupLog("import-bridge-start");
+    ({ PiBridge: PiBridgeClass } = await import("./bridge.ts"));
+    startupLog("import-bridge-done");
+    nextBridge = new PiBridgeClass({
+      cwd: WORKSPACE,
+      agentDir: AGENT_DIR,
+      mcpConfigPath: mcpConfigFile(),
+      loadGlobalExtensions: process.env.PI_STUDIO_LOAD_GLOBAL_EXTENSIONS === "1",
+    });
+    broadcast({ type: "booting", phase: "runtime", message: "Loading current model and session" });
+    await nextBridge.start();
+    bridge = nextBridge;
+    const [sessions, workspaces] = await Promise.all([
+      nextBridge.listSessions().catch((error) => {
+        startupLog("sessions-load-failed", error instanceof Error ? error.message : String(error));
+        return [] as SessionMeta[];
+      }),
+      Promise.resolve(nextBridge.listWorkspaces()),
+    ]);
+    initialSessions = sessions;
+    initialWorkspaces = workspaces;
+    startupLog("bridge-ready");
+    scheduler = new Scheduler(join(AGENT_DIR, "schedules.json"), async (task) => {
+      const previous = bridge.getActiveAgent().id;
+      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(task.agentId);
+      await bridge.prompt(`[Scheduled task: ${task.name}]\n${task.prompt}\n\nThis is a scheduled task. Return a concise result summary when complete.`);
+      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(previous);
+    });
+    bootState = "ready";
+    resolveBridgeReady(bridge);
+    broadcast({
+      type: "ready",
+      state: bridge.getState(),
+      sessions: initialSessions,
+      workspaces: initialWorkspaces,
+    });
+  } catch (error) {
+    if (nextBridge) await nextBridge.dispose();
+    bridge = undefined as unknown as PiBridge;
+    scheduler = undefined as unknown as Scheduler;
+    bootState = "error";
+    bootError = error instanceof Error ? error.message : String(error);
+    startupLog("bridge-failed", bootError);
+    rejectBridgeReady(error);
+    broadcast({ type: "boot_error", message: bootError });
+  } finally {
+    bridgeStarting = false;
+  }
+}
+
 async function main(): Promise<void> {
+  startupLog("process-start");
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
       console.error("");
@@ -815,34 +928,15 @@ async function main(): Promise<void> {
     throw err;
   });
   server.listen(PORT, "127.0.0.1", () => {
+    startupLog("http-listening", `port=${PORT}`);
     console.log("");
     console.log("  Pi Studio 已启动");
     console.log(`  前端:  http://localhost:${PORT}`);
     console.log(`  工作区: ${WORKSPACE}`);
     console.log(`  MCP 配置: ${mcpConfigFile()}`);
     console.log("");
+    void startBridge();
   });
-
-  try {
-    ({ PiBridge: PiBridgeClass } = await import("./bridge.ts"));
-    bridge = new PiBridgeClass({
-      cwd: WORKSPACE,
-      agentDir: AGENT_DIR,
-      mcpConfigPath: mcpConfigFile(),
-      loadGlobalExtensions: process.env.PI_STUDIO_LOAD_GLOBAL_EXTENSIONS === "1",
-    });
-    await bridge.start();
-    scheduler = new Scheduler(join(AGENT_DIR, "schedules.json"), async (task) => {
-      const previous = bridge.getActiveAgent().id;
-      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(task.agentId);
-      await bridge.prompt(`[定时任务：${task.name}]\n${task.prompt}\n\n这是计划任务触发的执行，请完成后简洁汇报结果。`);
-      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(previous);
-    });
-    resolveBridgeReady(bridge);
-  } catch (error) {
-    rejectBridgeReady(error);
-    throw error;
-  }
 }
 
 main().catch((e) => {

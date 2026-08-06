@@ -97,6 +97,7 @@ export class PiSocket {
   close(): void {
     this.closedByUser = true;
     if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws?.close();
   }
 }
@@ -260,6 +261,7 @@ export const getSubagents = () => json<{enabled:boolean}>("/api/subagents");
 export const setSubagents = (enabled:boolean) => json<{enabled:boolean}>("/api/subagents",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
 export const getGoals = () => json<{enabled:boolean;goal:string}>("/api/goals");
 export const setGoals = (enabled:boolean, goal:string) => json<{enabled:boolean;goal:string}>("/api/goals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,goal})});
+export const retryBoot = () => json<{ok:boolean;state:string;error?:string}>("/api/runtime/retry", { method: "POST" });
 
 export async function getEnvironment(): Promise<{ home?: string; username?: string }> {
   return json("/api/env");

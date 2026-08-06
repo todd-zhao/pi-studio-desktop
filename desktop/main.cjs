@@ -10,7 +10,14 @@ const DEFAULT_PORT = Number(process.env.PI_STUDIO_PORT || 8787);
 const smokeMode = process.env.PI_STUDIO_SMOKE === "1";
 let port = DEFAULT_PORT;
 const authToken = randomBytes(32).toString("hex");
+const startupStartedAt = Date.now();
 
+function startupLog(phase, details = "") {
+  const suffix = details ? ` ${details}` : "";
+  console.log(`[startup +${Date.now() - startupStartedAt}ms] ${phase}${suffix}`);
+}
+
+startupLog("process-start");
 const isPackaged = app.isPackaged;
 const projectRoot = path.join(__dirname, "..");
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
@@ -86,6 +93,7 @@ function startServer() {
   // Use the bundled standalone Node runtime for the server. This keeps native
   // extensions (such as Hermes Memory's SQLite store) on the same ABI in the
   // portable and Electron editions, without exposing Node to the renderer.
+  startupLog("server-spawn", `runtime=${serverRuntime()}`);
   const child = spawn(serverRuntime(), [serverEntry()], {
     cwd: serverCwd(),
     env: childEnv,
@@ -97,6 +105,7 @@ function startServer() {
   child.stderr?.on("data", (chunk) => logServer("err", chunk));
   child.on("spawn", () => {
     serverRunning = true;
+    startupLog("server-spawned", `pid=${child.pid ?? "unknown"}`);
   });
   child.on("exit", (code) => {
     serverRunning = false;
@@ -104,6 +113,7 @@ function startServer() {
     if (serverProcess === child) serverProcess = null;
   });
   child.on("error", (error) => {
+    startupLog("server-error", error instanceof Error ? error.message : String(error));
     console.error("[pi-server] failed:", error);
   });
   return child;
@@ -124,6 +134,13 @@ function stopServer() {
 function waitForServer(timeoutMs = 90_000) {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
+    let settled = false;
+    let healthLogged = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const attempt = () => {
       const req = http.get({
         host: "127.0.0.1",
@@ -131,19 +148,35 @@ function waitForServer(timeoutMs = 90_000) {
         path: "/api/health",
         headers: { Authorization: `Bearer ${authToken}` },
       }, (res) => {
-        res.resume();
-        if (res.statusCode === 200) {
-          resolve(true);
-        } else if (Date.now() >= deadline) {
-          resolve(false);
-        } else {
-          setTimeout(attempt, 250);
-        }
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          if (res.statusCode === 200) {
+            let state = "unknown";
+            try {
+              const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              state = payload.ready ? "ready" : payload.booting ? "booting" : "not-ready";
+            } catch {
+              // The status code is still enough to load the renderer.
+            }
+            if (!healthLogged) {
+              healthLogged = true;
+              startupLog("first-health-response", `status=${res.statusCode} state=${state}`);
+            }
+            finish(true);
+          } else if (Date.now() >= deadline) {
+            startupLog("health-timeout", `status=${res.statusCode ?? "unknown"}`);
+            finish(false);
+          } else {
+            setTimeout(attempt, 250);
+          }
+        });
       });
       req.setTimeout(1500, () => req.destroy());
       req.on("error", () => {
         if (Date.now() >= deadline) {
-          resolve(false);
+          startupLog("health-timeout", "request-error");
+          finish(false);
         } else {
           setTimeout(attempt, 250);
         }
@@ -152,7 +185,6 @@ function waitForServer(timeoutMs = 90_000) {
     attempt();
   });
 }
-
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -169,6 +201,7 @@ function createWindow() {
       sandbox: true,
     },
   });
+  startupLog("window-created", `size=${mainWindow.getBounds().width}x${mainWindow.getBounds().height}`);
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
@@ -230,6 +263,7 @@ function createWindow() {
 }
 
 async function main() {
+  startupLog("app-when-ready");
   if (!smokeMode) createWindow();
   const availablePort = await findAvailablePort(DEFAULT_PORT);
   if (!availablePort) {
@@ -238,6 +272,7 @@ async function main() {
     return;
   }
   port = availablePort;
+  startupLog("port-selected", `port=${port}`);
   serverProcess = startServer();
   const ready = await waitForServer();
   if (smokeMode) {
@@ -255,6 +290,8 @@ async function main() {
     return;
   }
   if (mainWindow) {
+    mainWindow.webContents.once("did-finish-load", () => startupLog("renderer-page-loaded"));
+    startupLog("renderer-load-start", `url=http://127.0.0.1:${port}/`);
     await mainWindow.loadURL(`http://127.0.0.1:${port}/?token=${encodeURIComponent(authToken)}`);
   }
 }

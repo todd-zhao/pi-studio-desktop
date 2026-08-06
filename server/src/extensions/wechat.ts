@@ -4,12 +4,7 @@
 // panel (QR, status, logs) while keeping the same SDK flow.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  WeChatBot,
-  stripMarkdown,
-  type IncomingMessage,
-} from "@wechatbot/wechatbot";
-import { toDataURL } from "qrcode";
+import type { WeChatBot, IncomingMessage } from "@wechatbot/wechatbot";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -29,6 +24,7 @@ export function wechatExtension(pi: ExtensionAPI): void {
   let isStreaming = false;
   let connectEpoch = 0;
   let logSeq = 0;
+  let stripMarkdownFn: (text: string) => string = (text) => text;
 
   const emitStatus = (phase: WechatStatusPhase, message?: string, account?: string): void => {
     pi.events.emit("wechat:status", { phase, message, account, timestamp: Date.now() });
@@ -73,10 +69,19 @@ export function wechatExtension(pi: ExtensionAPI): void {
     emitStatus("connecting", "Connecting to WeChat");
     emitLog("system", "正在连接微信...");
 
-    const nextBot = new WeChatBot({ storage: "file", logLevel: "warn" });
-    bot = nextBot;
+    let botInstance: WeChatBot | null = null;
 
     try {
+      // Keep the WeChat SDK and QR encoder out of the desktop boot path. The
+      // extension remains registered so /wechat status still works instantly.
+      const [{ WeChatBot, stripMarkdown }, { toDataURL }] = await Promise.all([
+        import("@wechatbot/wechatbot"),
+        import("qrcode"),
+      ]);
+      stripMarkdownFn = stripMarkdown;
+      const nextBot = new WeChatBot({ storage: "file", logLevel: "warn" });
+      botInstance = nextBot;
+      bot = nextBot;
       const creds = await nextBot.login({
         force,
         callbacks: {
@@ -180,7 +185,7 @@ export function wechatExtension(pi: ExtensionAPI): void {
       if (epoch !== connectEpoch) return;
       connecting = false;
       connected = false;
-      if (bot === nextBot) bot = null;
+      if (bot === botInstance) bot = null;
       emitStatus("error", `Login failed: ${e instanceof Error ? e.message : e}`);
       emitLog("system", `微信登录失败: ${e instanceof Error ? e.message : e}`);
     }
@@ -268,7 +273,7 @@ Key behaviors:
     }
     if (!finalText.trim()) finalText = assistantText || "[No response]";
 
-    const cleanText = stripMarkdown(finalText);
+    const cleanText = stripMarkdownFn(finalText);
 
     try {
       await bot.stopTyping(reply.userId);

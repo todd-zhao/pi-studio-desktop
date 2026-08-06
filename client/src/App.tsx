@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PiSocket, getGoals, getSubagents, listAgents, listSessions, listWorkspaces, setActiveAgent, setGoals, setSubagents } from "./api";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { PiSocket, getGoals, getSubagents, listAgents, listSessions, retryBoot, setActiveAgent, setGoals, setSubagents } from "./api";
 import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
-import { McpPanel } from "./components/McpPanel";
-import { ModelsPanel } from "./components/ModelsPanel";
-import { SkillsPanel } from "./components/SkillsPanel";
-import { AgentsPanel } from "./components/AgentsPanel";
-import { TeamPanel } from "./components/TeamPanel";
-import { SchedulesPanel } from "./components/SchedulesPanel";
-import { WechatPanel } from "./components/WechatPanel";
-import { FilePreview } from "./components/FilePreview";
+const McpPanel = lazy(() => import("./components/McpPanel").then((module) => ({ default: module.McpPanel })));
+const ModelsPanel = lazy(() => import("./components/ModelsPanel").then((module) => ({ default: module.ModelsPanel })));
+const SkillsPanel = lazy(() => import("./components/SkillsPanel").then((module) => ({ default: module.SkillsPanel })));
+const AgentsPanel = lazy(() => import("./components/AgentsPanel").then((module) => ({ default: module.AgentsPanel })));
+const TeamPanel = lazy(() => import("./components/TeamPanel").then((module) => ({ default: module.TeamPanel })));
+const SchedulesPanel = lazy(() => import("./components/SchedulesPanel").then((module) => ({ default: module.SchedulesPanel })));
+const WechatPanel = lazy(() => import("./components/WechatPanel").then((module) => ({ default: module.WechatPanel })));
+const FilePreview = lazy(() => import("./components/FilePreview").then((module) => ({ default: module.FilePreview })));
 
 export interface LiveTool {
   key: string;
@@ -41,6 +41,7 @@ export default function App() {
   const [panel, setPanel] = useState<PanelTab | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [connected, setConnected] = useState(false);
+  const [bootStatus, setBootStatus] = useState<{ state: "booting" | "error" | "ready"; message?: string }>({ state: "booting" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -215,13 +216,13 @@ export default function App() {
       switch (msg.type) {
         case "ready":
           setConnected(true);
+          setBootStatus({ state: "ready" });
           applyState(msg.state);
-          void refreshSessions();
-          void listWorkspaces()
-            .then(setWorkspaces)
-            .catch(() => {
-              /* ignore */
-            });
+          if (msg.sessions) setSessions(msg.sessions);
+          if (msg.workspaces) setWorkspaces(msg.workspaces);
+          if (!msg.sessions) void refreshSessions();
+          void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
+          void getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {});
           void listAgents()
             .then((result) => setAgents(result.agents))
             .catch(() => {
@@ -249,6 +250,14 @@ export default function App() {
         case "error":
           toast("error", msg.message);
           break;
+        case "booting":
+          setConnected(false);
+          setBootStatus({ state: "booting", message: msg.message ?? msg.phase });
+          break;
+        case "boot_error":
+          setConnected(false);
+          setBootStatus({ state: "error", message: msg.message });
+          break;
         case "ask_user":
           setCustomAnswer("");
           setQuestion(msg.question);
@@ -267,8 +276,6 @@ export default function App() {
     });
 
     socket.connect();
-    void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
-    void getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {});
     // Optional deep-link: ?session=<absolute session file path>
     const deepLink = new URLSearchParams(location.search).get("session");
     if (deepLink) {
@@ -284,6 +291,17 @@ export default function App() {
       socket.close();
     };
   }, [applyState, handleEvent, toast]);
+
+  const retryInitialization = useCallback(async () => {
+    setBootStatus({ state: "booting", message: "Retrying AI engine initialization" });
+    try {
+      await retryBoot();
+      socketRef.current?.close();
+      socketRef.current?.connect();
+    } catch (error) {
+      setBootStatus({ state: "error", message: (error as Error).message });
+    }
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -383,6 +401,16 @@ export default function App() {
 
   return (
     <div className="app">
+      {bootStatus.state !== "ready" && (
+        <div className="boot-overlay" role="status" aria-live="polite">
+          <div className="boot-card">
+            <div className="boot-indicator" aria-hidden="true" />
+            <strong>{bootStatus.state === "error" ? "AI 引擎初始化失败" : "AI 引擎初始化中"}</strong>
+            <span>{bootStatus.message || "正在准备本地运行环境"}</span>
+            {bootStatus.state === "error" && <button className="btn primary" onClick={() => void retryInitialization()}>重试</button>}
+          </div>
+        </div>
+      )}
       {sidebarOpen ? (
         <Sidebar
           state={state}
@@ -424,6 +452,7 @@ export default function App() {
         </div>
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>
+      <Suspense fallback={panel || preview ? <div className="right-panel panel-loading">加载面板中…</div> : null}>
       {panel === "mcp" && (
         <div className="right-panel">
           <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />
@@ -473,6 +502,7 @@ export default function App() {
           onInsertRef={(path) => handlePickFile(path, path.split("/").pop() ?? path)}
         />
       )}
+      </Suspense>
       {question && (
         <div className="ask-user-backdrop" role="dialog" aria-modal="true" aria-label="Agent 澄清问题">
           <div className="ask-user-card">

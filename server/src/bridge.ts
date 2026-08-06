@@ -194,25 +194,15 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       this.emit("mcp_status", this.lastMcpStatus);
     });
 
-    const available = await this.modelRuntime.getAvailable();
-    this.availableModels = available.map((m) => {
-      const meta = m as unknown as { displayName?: string; thinkingLevels?: string[]; kind?: string; contextWindow?: number };
-      return {
-        provider: m.provider,
-        id: m.id,
-        displayName: meta.displayName ?? `${m.provider}/${m.id}`,
-        thinking: meta.thinkingLevels ?? [],
-        kind: meta.kind,
-        contextWindow: meta.contextWindow,
-      };
-    });
-
+    // Let session restoration and the configured current model complete before
+    // refreshing the full provider availability snapshot for the model picker.
     await this.createRuntime();
+    this.updateAvailableModels();
     this.started = true;
     this.emit("log", "info", `Pi runtime ready (cwd: ${this.cwd})`);
     this.pushState();
-    void this.emitSessions();
-    this.emit("workspaces", this.listWorkspaces());
+    // Keep first paint independent from the full model-directory refresh.
+    void this.refreshModels().catch((error) => this.emit("log", "warn", `Model catalog refresh failed: ${error instanceof Error ? error.message : String(error)}`));
   }
 
   private makeFactory(): CreateAgentSessionRuntimeFactory {
@@ -873,6 +863,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     } catch (error) {
       result = { errors: new Map([[this.agentDir, new Error((error as Error).message)]]) };
     }
+    this.updateAvailableModels();
     this.pushState();
     const errors: string[] = [];
     for (const [provider, error] of result?.errors ?? new Map()) {
@@ -930,6 +921,20 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.pushState();
   }
 
+  private updateAvailableModels(): void {
+    const available = this.modelRuntime?.getAvailableSnapshot() ?? [];
+    this.availableModels = available.map((m) => {
+      const meta = m as unknown as { displayName?: string; thinkingLevels?: string[]; kind?: string; contextWindow?: number };
+      return {
+        provider: m.provider,
+        id: m.id,
+        displayName: meta.displayName ?? `${m.provider}/${m.id}`,
+        thinking: meta.thinkingLevels ?? [],
+        kind: meta.kind,
+        contextWindow: meta.contextWindow,
+      };
+    });
+  }
   private availableModelInfos(): ModelInfo[] {
     const snap = this.modelRuntime?.getAvailableSnapshot() ?? [];
     if (snap.length === 0 && this.availableModels.length > 0) return this.availableModels;

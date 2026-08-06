@@ -135,10 +135,13 @@ export type ClientWsMessage =
   | { type: "switch_workspace"; path: string }
   | { type: "add_workspace"; path: string }
   | { type: "ask_user_answer"; id: string; answer: string }
+  | { type: "retry_boot" }
   | { type: "wechat_command"; action: WechatCommandAction };
 
 export type ServerWsMessage =
-  | { type: "ready"; state: AppState }
+  | { type: "booting"; phase: string; message?: string }
+  | { type: "boot_error"; message: string }
+  | { type: "ready"; state: AppState; sessions?: SessionMeta[]; workspaces?: WorkspaceInfo[] }
   | { type: "state"; state: AppState }
   | { type: "event"; event: unknown }
   | { type: "mcp_status"; snapshot: McpStatusSnapshot }
