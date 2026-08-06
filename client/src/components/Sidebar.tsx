@@ -45,16 +45,13 @@ function fmtTime(ts?: number): string {
 
 export function Sidebar(props: Props) {
   const { state, sessions, workspaces, agents, connected, activePanel, theme } = props;
-  const [filter, setFilter] = useState("");
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const models = state?.availableModels ?? [];
   const current = state?.model;
   const currentKey = current ? `${current.provider}/${current.id}` : "";
-  const currentModelName = current?.displayName && !/^unknown(?:[/]unknown)?$/i.test(current.displayName)
-    ? current.displayName
-    : "";
 
   // group models by provider
   const groups = new Map<string, typeof models>();
@@ -63,10 +60,6 @@ export function Sidebar(props: Props) {
     g.push(m);
     groups.set(m.provider, g);
   }
-
-  const visibleSessions = filter
-    ? sessions.filter((s) => (s.name ?? s.file).toLowerCase().includes(filter.toLowerCase()))
-    : sessions;
 
   const mcp = state?.mcp;
   const mcpServers = mcp?.servers ?? [];
@@ -96,7 +89,6 @@ export function Sidebar(props: Props) {
           <span>{connected ? "已连接" : "连接中"}</span>
           <span className="status-separator">·</span>
           <span>Pi {state?.piVersion ?? "0.83.0"}</span>
-          {currentModelName && <span className="status-model">{currentModelName}</span>}
         </div>
       </div>
 
@@ -127,17 +119,7 @@ export function Sidebar(props: Props) {
         </button>
       </div>
 
-      <button className={`team-entry-btn ${activePanel === "team" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "team" ? null : "team")}> 
-        <span className="team-entry-icon">◎</span>
-        <span>团队任务</span>
-        <span className="team-entry-arrow">›</span>
-      </button>
-      <button className={`team-entry-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}><span className="team-entry-icon">◷</span><span>定时任务</span><span className="team-entry-arrow">›</span></button>
-      <button className={`team-entry-btn ${activePanel === "wechat" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "wechat" ? null : "wechat")}><span className="team-entry-icon">◈</span><span>微信对话</span><span className="team-entry-arrow">›</span></button>
-
       <div className="sidebar-section">运行配置</div>
-      <div className="sel-row subagents-toggle"><label>多智能体</label><button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button><small>{props.subagentsEnabled ? "已开启" : "关闭"}</small></div>
-      <div className="goal-control"><div className="sel-row subagents-toggle"><label>长时目标审查</label><button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button><small>{props.goalsEnabled ? "已开启" : "关闭"}</small></div><textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} /></div>
       <div className="sel-row">
         <label>助手</label>
         <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>
@@ -145,18 +127,6 @@ export function Sidebar(props: Props) {
         </select>
         <button className="icon-btn row-action-btn" title="Agent 管理" onClick={() => props.onPanel(activePanel === "agents" ? null : "agents")}>•••</button>
       </div>
-      {showDirPicker && (
-        <DirPicker
-          initialPath={state?.cwd}
-          onSelect={(p) => {
-            props.onAddWorkspace(p);
-            props.onSwitchWorkspace(p);
-            setShowDirPicker(false);
-          }}
-          onClose={() => setShowDirPicker(false)}
-        />
-      )}
-
       <div className="sel-row">
         <label>模型</label>
         <select
@@ -192,80 +162,119 @@ export function Sidebar(props: Props) {
           ))}
         </select>
       </div>
-
       <button className="new-session-btn" onClick={props.onNewSession}>
         <span>＋</span> 新会话
       </button>
 
-      <div className="sidebar-section">
-        浏览 <span className="section-action" onClick={props.onRefreshSessions}>↻</span>
-      </div>
-      <div className="side-tabs">
-        <div className={`side-tab ${sideTab === "sessions" ? "active" : ""}`} onClick={() => setSideTab("sessions")}>
-          对话
-        </div>
-        <div className={`side-tab ${sideTab === "files" ? "active" : ""}`} onClick={() => setSideTab("files")}>
-          文件
-        </div>
-      </div>
-      {sideTab === "sessions" ? (
-        <div className="session-list">
-          {visibleSessions.length === 0 && (
-            <div style={{ padding: "8px 10px", color: "var(--text-3)", fontSize: "12px" }}>
-              暂无对话
+      <div className="advanced-config">
+        <button
+          className={`advanced-toggle${showAdvanced ? " open" : ""}`}
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+        >
+          <span className="advanced-caret">▸</span>
+          <span>高级配置</span>
+        </button>
+        {showAdvanced && (
+          <div className="advanced-body">
+            <div className="sel-row subagents-toggle">
+              <label>多智能体</label>
+              <button className={`toggle-switch ${props.subagentsEnabled ? "on" : ""}`} onClick={() => props.onToggleSubagents(!props.subagentsEnabled)} aria-pressed={props.subagentsEnabled}><span /></button>
+              <small>{props.subagentsEnabled ? "已开启" : "关闭"}</small>
             </div>
-          )}
-          {visibleSessions.map((s) => (
-            <div
-              key={s.id}
-              className={`session-item ${state?.sessionFile === s.file ? "active" : ""}`}
-              onClick={() => props.onSwitchSession(s.file)}
-            >
-              <div className="name">{s.name || s.firstMessage || s.file.split(/[\\/]/).pop()}</div>
-              <div className="meta">
-                {s.messageCount} 条消息 · {fmtTime(s.createdAt)}
+            <div className="goal-control">
+              <div className="sel-row subagents-toggle">
+                <label>长时目标审查</label>
+                <button className={`toggle-switch ${props.goalsEnabled ? "on" : ""}`} onClick={() => props.onToggleGoals(!props.goalsEnabled)} aria-pressed={props.goalsEnabled}><span /></button>
+                <small>{props.goalsEnabled ? "已开启" : "关闭"}</small>
               </div>
+              <textarea value={props.goalText} placeholder="设定长时目标，例如：完成登录重构并通过完整测试" onChange={(e) => props.onGoalTextChange(e.target.value)} onBlur={(e) => props.onSaveGoalText(e.currentTarget.value)} />
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="session-list">
-          <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} />
-        </div>
+          </div>
+        )}
+      </div>
+
+      {showDirPicker && (
+        <DirPicker
+          initialPath={state?.cwd}
+          onSelect={(p) => {
+            props.onAddWorkspace(p);
+            props.onSwitchWorkspace(p);
+            setShowDirPicker(false);
+          }}
+          onClose={() => setShowDirPicker(false)}
+        />
       )}
 
-      <div className="sidebar-mcp">
-        <h4>
-          扩展
-          <span style={{ fontSize: "11px", color: "var(--text-3)" }}>
-            MCP {connectedCount}/{mcpServers.length}
-          </span>
-        </h4>
-        {mcpServers.map((s) => (
-          <div
-            key={s.name}
-            className="mcp-chip"
-            onClick={() => props.onPanel(activePanel === "mcp" ? null : "mcp")}
-            title={`${s.name} · ${s.status} · ${s.toolCount} 工具`}
-          >
-            <span className={`dot ${s.status === "connected" || s.status === "keep-alive" ? "on" : s.status === "failed" ? "err" : "off"}`} />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-            <span style={{ marginLeft: "auto", color: "var(--text-3)", fontSize: "11px" }}>{s.toolCount}</span>
+      <div className="browse-area">
+        <div className="sidebar-section">
+          浏览 <span className="section-action" title="刷新会话列表" onClick={props.onRefreshSessions}>↻</span>
+        </div>
+        <div className="side-tabs">
+          <div className={`side-tab ${sideTab === "sessions" ? "active" : ""}`} onClick={() => setSideTab("sessions")}>
+            对话
           </div>
-        ))}
-        <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+          <div className={`side-tab ${sideTab === "files" ? "active" : ""}`} onClick={() => setSideTab("files")}>
+            文件
+          </div>
+        </div>
+        {sideTab === "sessions" ? (
+          <div className="session-list">
+            {sessions.length === 0 && (
+              <div style={{ padding: "8px 10px", color: "var(--text-3)", fontSize: "12px" }}>
+                暂无对话
+              </div>
+            )}
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                className={`session-item ${state?.sessionFile === s.file ? "active" : ""}`}
+                onClick={() => props.onSwitchSession(s.file)}
+              >
+                <div className="name">{s.name || s.firstMessage || s.file.split(/[\\/]/).pop()}</div>
+                <div className="meta">
+                  {s.messageCount} 条消息 · {fmtTime(s.createdAt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="session-list">
+            <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} />
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar-section">功能</div>
+      <div className="feature-grid">
+        <button className={`feature-btn ${activePanel === "team" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "team" ? null : "team")}>
+          <span className="feature-icon">◎</span>
+          <span>团队任务</span>
+        </button>
+        <button className={`feature-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}>
+          <span className="feature-icon">◷</span>
+          <span>定时任务</span>
+        </button>
+        <button className={`feature-btn ${activePanel === "wechat" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "wechat" ? null : "wechat")}>
+          <span className="feature-icon">◈</span>
+          <span>微信对话</span>
+        </button>
+      </div>
+
+      <div className="sidebar-mcp">
+        <div className="mcp-head-row">
+          <span className="mcp-title">扩展</span>
+          <span className="mcp-status">MCP {connectedCount}/{mcpServers.length}</span>
+        </div>
+        <div className="mcp-actions">
           <button className="mini-btn" onClick={() => props.onPanel(activePanel === "mcp" ? null : "mcp")}>
             MCP
-          </button>
-          <button className="mini-btn" onClick={() => props.onPanel(activePanel === "models" ? null : "models")}>
-            模型
           </button>
           <button className="mini-btn" onClick={() => props.onPanel(activePanel === "skills" ? null : "skills")}>
             Skills
           </button>
         </div>
       </div>
-
     </div>
   );
 }
