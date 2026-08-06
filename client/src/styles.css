@@ -2515,6 +2515,7 @@ body {
 .ask-user-option small { color: var(--text-3); }
 .ask-user-freeform { display: flex; gap: 8px; margin-top: 14px; }
 .ask-user-freeform input { flex: 1; min-width: 0; padding: 10px 12px; color: var(--text); background: var(--bg); border: 1px solid var(--border-2); border-radius: 9px; }
+.schedule-form { display:grid; gap:8px; margin:14px 0; }.schedule-form input,.schedule-form textarea,.schedule-form select { padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border-2); border-radius:7px; }.schedule-form textarea { min-height:76px; resize:vertical; }.schedule-card { padding:12px; margin:9px 0; background:var(--bg-3); border:1px solid var(--border); border-radius:9px; display:grid; gap:6px; }.schedule-card p{margin:0;font-size:12px;color:var(--text-2);white-space:pre-wrap}.schedule-card small{color:var(--text-3)}.schedule-card div{display:flex;gap:6px}
 
 /* The dark theme uses a light filled primary button, so its label must stay dark. */
 :root[data-theme="dark"] .new-session-btn,

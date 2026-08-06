@@ -11,6 +11,7 @@ import multer from "multer";
 import { WebSocketServer, WebSocket } from "ws";
 import type { PiBridge } from "./bridge.ts";
 import type { ParsedDoc } from "./parsers.ts";
+import { Scheduler, type ScheduledTask } from "./scheduler.ts";
 import type {
   AppState,
   ClientWsMessage,
@@ -61,6 +62,7 @@ mkdirSync(join(WORKSPACE, "uploads"), { recursive: true });
 // ------------------------------------------------------------------ bridge
 
 let bridge!: PiBridge;
+let scheduler!: Scheduler;
 let PiBridgeClass!: typeof import("./bridge.ts").PiBridge;
 let resolveBridgeReady!: (value: PiBridge) => void;
 let rejectBridgeReady!: (reason: unknown) => void;
@@ -653,6 +655,15 @@ const wss = new WebSocketServer({
   },
 });
 
+app.get("/api/schedules", (_req, res) => res.json(scheduler.list()));
+app.post("/api/schedules", (req, res) => {
+  try { res.json(scheduler.saveTask(req.body as Omit<ScheduledTask, "id" | "nextRunAt" | "lastRunAt" | "lastStatus" | "lastResult"> & { id?: string })); }
+  catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+app.post("/api/schedules/:id/run", async (req, res) => { try { await scheduler.trigger(req.params.id); res.json({ ok: true }); } catch(e) { res.status(400).json({error:(e as Error).message}); } });
+app.post("/api/schedules/:id/enabled", (req, res) => { try { res.json(scheduler.setEnabled(req.params.id, !!req.body.enabled)); } catch(e) { res.status(400).json({error:(e as Error).message}); } });
+app.delete("/api/schedules/:id", (req,res) => { scheduler.remove(req.params.id); res.json({ok:true}); });
+
 function send(ws: WebSocket, msg: ServerWsMessage): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -802,6 +813,12 @@ async function main(): Promise<void> {
       loadGlobalExtensions: process.env.PI_STUDIO_LOAD_GLOBAL_EXTENSIONS === "1",
     });
     await bridge.start();
+    scheduler = new Scheduler(join(AGENT_DIR, "schedules.json"), async (task) => {
+      const previous = bridge.getActiveAgent().id;
+      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(task.agentId);
+      await bridge.prompt(`[定时任务：${task.name}]\n${task.prompt}\n\n这是计划任务触发的执行，请完成后简洁汇报结果。`);
+      if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(previous);
+    });
     resolveBridgeReady(bridge);
   } catch (error) {
     rejectBridgeReady(error);

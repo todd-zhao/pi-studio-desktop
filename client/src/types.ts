@@ -123,6 +123,8 @@ export interface AskUserQuestion {
   allowFreeform: boolean;
 }
 
+export interface ScheduledTask { id: string; name: string; prompt: string; agentId: string; kind: "once"|"interval"|"daily"|"weekly"; at?: string; intervalMinutes?: number; time?: string; weekday?: number; enabled: boolean; nextRunAt?: number; lastRunAt?: number; lastStatus?: "success"|"error"|"queued"; lastResult?: string; }
+
 export interface UploadResult {
   files: AttachmentInfo[];
 }

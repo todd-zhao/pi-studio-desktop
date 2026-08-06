@@ -9,6 +9,7 @@ import { ModelsPanel } from "./components/ModelsPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { TeamPanel } from "./components/TeamPanel";
+import { SchedulesPanel } from "./components/SchedulesPanel";
 import { FilePreview } from "./components/FilePreview";
 
 export interface LiveTool {
@@ -29,7 +30,7 @@ export interface RenderedMessage extends ClientMessage {
   toolResults?: Record<string, { text: string; isError: boolean }>;
 }
 
-export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team";
+export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules";
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -389,6 +390,7 @@ export default function App() {
           <TeamPanel onClose={() => setPanel(null)} onToast={toast} />
         </div>
       )}
+      {panel === "schedules" && <div className="right-panel"><SchedulesPanel agents={agents} onClose={() => setPanel(null)} onToast={toast} /></div>}
       {preview && (
         <FilePreview
           file={preview}

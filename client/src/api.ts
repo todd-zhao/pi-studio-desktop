@@ -1,4 +1,5 @@
 import type { AgentProfile, AppState, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
+import type { ScheduledTask } from "./types";
 
 let authToken = "";
 try {
@@ -250,6 +251,11 @@ export async function setProviderApiKey(provider: string, apiKey: string): Promi
 export async function removeProviderApiKey(provider: string): Promise<void> {
   await json(`/api/models/api-key?provider=${encodeURIComponent(provider)}`, { method: "DELETE" });
 }
+export const listSchedules = () => json<ScheduledTask[]>("/api/schedules");
+export const saveSchedule = (task: Partial<ScheduledTask>) => json<ScheduledTask>("/api/schedules", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(task) });
+export const runSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}/run`, {method:"POST"});
+export const setScheduleEnabled = (id:string, enabled:boolean) => json<ScheduledTask>(`/api/schedules/${encodeURIComponent(id)}/enabled`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
+export const removeSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}`,{method:"DELETE"});
 
 export async function getEnvironment(): Promise<{ home?: string; username?: string }> {
   return json("/api/env");

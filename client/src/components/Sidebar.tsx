@@ -124,11 +124,12 @@ export function Sidebar(props: Props) {
         </button>
       </div>
 
-      <button className={`team-entry-btn ${activePanel === "team" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "team" ? null : "team")}>
+      <button className={`team-entry-btn ${activePanel === "team" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "team" ? null : "team")}> 
         <span className="team-entry-icon">◎</span>
         <span>团队任务</span>
         <span className="team-entry-arrow">›</span>
       </button>
+      <button className={`team-entry-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}><span className="team-entry-icon">◷</span><span>定时任务</span><span className="team-entry-arrow">›</span></button>
 
       <div className="sidebar-section">运行配置</div>
       <div className="sel-row">
