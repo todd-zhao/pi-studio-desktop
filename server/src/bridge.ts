@@ -38,6 +38,16 @@ import type {
 } from "./types.ts";
 
 const appRequire = createRequire(import.meta.url);
+
+function resolvePiExtensionEntry(packageName: string): string {
+  const pkgJsonPath = appRequire.resolve(`${packageName}/package.json`);
+  const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
+    pi?: { extensions?: string[] };
+  };
+  const entry = pkg.pi?.extensions?.[0];
+  if (!entry) return appRequire.resolve(packageName);
+  return resolve(dirname(pkgJsonPath), entry);
+}
 const MEMORY_SECRET_PATTERNS = [
   /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i,
   /(?:sk|rk|pk)_[A-Za-z0-9_-]{20,}/,
@@ -152,7 +162,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.loadGlobalExtensions = options.loadGlobalExtensions ?? false;
     this.skillsDir = join(this.agentDir, "skills");
     this.subagentsExtensionPath = appRequire.resolve("pi-subagents");
-    this.goalsExtensionPath = appRequire.resolve("pi-goal-list-loop-audit");
+    this.goalsExtensionPath = resolvePiExtensionEntry("pi-goal-list-loop-audit");
     try { this.subagentsEnabled = !!JSON.parse(readFileSync(join(this.agentDir, "subagents.json"), "utf8")).enabled; } catch { /* default off */ }
     try {
       const stored = JSON.parse(readFileSync(join(this.agentDir, "goals.json"), "utf8")) as { enabled?: boolean; goal?: string };
