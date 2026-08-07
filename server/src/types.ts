@@ -144,6 +144,7 @@ export type ServerWsMessage =
   | { type: "booting"; phase: string; message?: string }
   | { type: "boot_error"; message: string }
   | { type: "ready"; state: AppState; sessions?: SessionMeta[]; workspaces?: WorkspaceInfo[] }
+  | { type: "initial_state"; sessions: SessionMeta[]; workspaces: WorkspaceInfo[] }
   | { type: "state"; state: AppState }
   | { type: "event"; event: unknown }
   | { type: "mcp_status"; snapshot: McpStatusSnapshot }

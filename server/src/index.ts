@@ -875,31 +875,38 @@ async function startBridge(): Promise<void> {
     });
     broadcast({ type: "booting", phase: "runtime", message: "Loading current model and session" });
     await nextBridge.start();
+    startupLog("bridge-started");
     bridge = nextBridge;
-    const [sessions, workspaces] = await Promise.all([
-      nextBridge.listSessions().catch((error) => {
-        startupLog("sessions-load-failed", error instanceof Error ? error.message : String(error));
-        return [] as SessionMeta[];
-      }),
-      Promise.resolve(nextBridge.listWorkspaces()),
-    ]);
-    initialSessions = sessions;
-    initialWorkspaces = workspaces;
-    startupLog("bridge-ready");
     scheduler = new Scheduler(join(AGENT_DIR, "schedules.json"), async (task) => {
       const previous = bridge.getActiveAgent().id;
       if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(task.agentId);
       await bridge.prompt(`[Scheduled task: ${task.name}]\n${task.prompt}\n\nThis is a scheduled task. Return a concise result summary when complete.`);
       if (task.agentId && task.agentId !== previous) await bridge.setActiveAgent(previous);
     });
+    startupLog("scheduler-created");
     bootState = "ready";
     resolveBridgeReady(bridge);
-    broadcast({
-      type: "ready",
-      state: bridge.getState(),
-      sessions: initialSessions,
-      workspaces: initialWorkspaces,
-    });
+    startupLog("bridge-ready");
+    broadcast({ type: "ready", state: bridge.getState() });
+
+    // Session and workspace listings no longer gate the ready broadcast.
+    void (async () => {
+      try {
+        const [sessions, workspaces] = await Promise.all([
+          nextBridge.listSessions().catch((error) => {
+            startupLog("sessions-load-failed", error instanceof Error ? error.message : String(error));
+            return [] as SessionMeta[];
+          }),
+          Promise.resolve(nextBridge.listWorkspaces()),
+        ]);
+        initialSessions = sessions;
+        initialWorkspaces = workspaces;
+        startupLog("initial-state-loaded", `sessions=${sessions.length} workspaces=${workspaces.length}`);
+        broadcast({ type: "initial_state", sessions, workspaces });
+      } catch (error) {
+        startupLog("initial-state-failed", error instanceof Error ? error.message : String(error));
+      }
+    })();
   } catch (error) {
     if (nextBridge) await nextBridge.dispose();
     bridge = undefined as unknown as PiBridge;

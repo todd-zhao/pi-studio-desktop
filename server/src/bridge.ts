@@ -39,6 +39,12 @@ import type {
 
 const appRequire = createRequire(import.meta.url);
 
+const startupStartedAt = Date.now();
+function startupLog(phase: string, details = ""): void {
+  const suffix = details ? ` ${details}` : "";
+  console.log(`[startup +${Date.now() - startupStartedAt}ms] bridge:${phase}${suffix}`);
+}
+
 function resolvePiExtensionEntry(packageName: string): string {
   const pkgJsonPath = appRequire.resolve(`${packageName}/package.json`);
   const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
@@ -180,7 +186,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   // ---------------------------------------------------------------- lifecycle
 
   async start(): Promise<void> {
+    startupLog("model-runtime-create-start");
     this.modelRuntime = await ModelRuntime.create();
+    startupLog("model-runtime-create-done");
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
     this.eventBus = createEventBus();
 
@@ -196,7 +204,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
     // Let session restoration and the configured current model complete before
     // refreshing the full provider availability snapshot for the model picker.
+    startupLog("create-runtime-start");
     await this.createRuntime();
+    startupLog("create-runtime-done");
     this.updateAvailableModels();
     this.started = true;
     this.emit("log", "info", `Pi runtime ready (cwd: ${this.cwd})`);
@@ -216,6 +226,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       execute: async (_id: string, params: { question: string; options?: Array<{ label: string; description?: string }>; allowFreeform?: boolean }) => ({ content: [{ type: "text", text: await this.askUser(params.question, params.options ?? [], params.allowFreeform !== false) }] }),
     });
     return async ({ cwd, sessionManager, sessionStartEvent }) => {
+      startupLog("create-agent-session-services-start");
       const services = await createAgentSessionServices({
         cwd,
         agentDir: this.agentDir,
@@ -241,13 +252,17 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           extensionFactories: [appMcpAdapter, askUserExtension, wechatExtension],
         },
       });
+      startupLog("create-agent-session-services-done");
+      startupLog("create-agent-session-from-services-start");
+      const runtime = await createAgentSessionFromServices({
+        services,
+        sessionManager,
+        sessionStartEvent,
+        tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "ask_user"],
+      });
+      startupLog("create-agent-session-from-services-done");
       return {
-        ...(await createAgentSessionFromServices({
-          services,
-          sessionManager,
-          sessionStartEvent,
-          tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "ask_user"],
-        })),
+        ...runtime,
         services,
         diagnostics: services.diagnostics,
       };
@@ -255,17 +270,24 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   private async createRuntime(): Promise<void> {
+    startupLog("session-manager-create-start");
+    const sessionManager = SessionManager.create(this.cwd);
+    startupLog("session-manager-create-done");
+    startupLog("create-agent-session-runtime-start");
     this.runtime = await createAgentSessionRuntime(this.makeFactory(), {
       cwd: this.cwd,
       agentDir: this.agentDir,
-      sessionManager: SessionManager.create(this.cwd),
+      sessionManager,
     });
+    startupLog("create-agent-session-runtime-done");
 
     for (const d of this.runtime.diagnostics ?? []) {
       this.emit("log", d.type === "error" ? "error" : d.type === "warning" ? "warn" : "info", d.message);
     }
 
+    startupLog("bind-session-start");
     await this.bindSession();
+    startupLog("bind-session-done");
   }
 
   private async bindSession(): Promise<void> {

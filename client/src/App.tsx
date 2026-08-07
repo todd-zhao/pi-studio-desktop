@@ -220,14 +220,15 @@ export default function App() {
           applyState(msg.state);
           if (msg.sessions) setSessions(msg.sessions);
           if (msg.workspaces) setWorkspaces(msg.workspaces);
-          if (!msg.sessions) void refreshSessions();
-          void getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {});
-          void getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {});
-          void listAgents()
-            .then((result) => setAgents(result.agents))
-            .catch(() => {
-              /* ignore */
-            });
+          void Promise.all([
+            getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {}),
+            getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {}),
+            listAgents().then((result) => setAgents(result.agents)).catch(() => {}),
+          ]);
+          break;
+        case "initial_state":
+          setSessions(msg.sessions);
+          setWorkspaces(msg.workspaces);
           break;
         case "state":
           applyState(msg.state);
