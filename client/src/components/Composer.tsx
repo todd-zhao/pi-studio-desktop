@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { listCommands, listWorkspaceFiles, uploadFiles } from "../api";
-import type { AttachmentInfo, CommandInfo } from "../types";
+import type { AgentProfile, AttachmentInfo, CommandInfo, ModelInfo } from "../types";
 
 export interface ComposerHandle {
   insertText: (text: string) => void;
@@ -8,7 +8,12 @@ export interface ComposerHandle {
 
 interface Props {
   isStreaming: boolean;
-  modelName?: string;
+  model?: ModelInfo | null;
+  models: ModelInfo[];
+  agents: AgentProfile[];
+  activeAgentId?: string;
+  onSetModel: (provider: string, id: string) => void;
+  onSetAgent: (id: string) => void;
   onSend: (text: string, attachments?: AttachmentInfo[], refs?: string[]) => void;
   onAbort: () => void;
   onError: (message: string) => void;
@@ -62,15 +67,18 @@ function extractRefs(text: string): string[] {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { isStreaming, modelName, onSend, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
+  { isStreaming, model, models, agents, activeAgentId, onSetModel, onSetAgent, onSend, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
   ref,
 ) {
-  const visibleModelName = modelName && !/^unknown(?:[/]unknown)?$/i.test(modelName) ? modelName : "";
+  const visibleModelName = model?.displayName && !/^unknown(?:[/]unknown)?$/i.test(model.displayName) ? model.displayName : "";
+  const currentModelKey = model ? `${model.provider}/${model.id}` : "";
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [uploading, setUploading] = useState(false);
   const [completion, setCompletion] = useState<CompletionState | null>(null);
   const [taskModeOpen, setTaskModeOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -289,14 +297,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     setAttachments([]);
     setCompletion(null);
     setTaskModeOpen(false);
+    setModelOpen(false);
+    setAgentOpen(false);
     if (taRef.current) taRef.current.style.height = "auto";
   };
 
   const canSend = text.trim().length > 0 || attachments.length > 0;
   const comp = completion;
 
+  const modelGroups = new Map<string, ModelInfo[]>();
+  for (const m of models) {
+    const g = modelGroups.get(m.provider) ?? [];
+    g.push(m);
+    modelGroups.set(m.provider, g);
+  }
+
   return (
-    <div className="composer-wrap">      <div className="composer">
+    <div className="composer-wrap">
+      <div className="composer">
         {attachments.length > 0 && (
           <div className="composer-attach">
             {attachments.map((a) => (
@@ -352,6 +370,90 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               e.target.value = "";
             }}
           />
+          <div className="picker-wrap">
+            <button
+              className={`icon-btn picker-btn${modelOpen ? " active" : ""}`}
+              title="选择模型"
+              onClick={() => {
+                setModelOpen((v) => !v);
+                setAgentOpen(false);
+                setTaskModeOpen(false);
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="5" y="5" width="14" height="14" rx="2" />
+                <rect x="9" y="9" width="6" height="6" />
+                <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+              </svg>
+            </button>
+            {modelOpen && <div className="picker-veil" onClick={() => setModelOpen(false)} />}
+            {modelOpen && (
+              <div className="picker-pop">
+                <div className="picker-head">选择模型</div>
+                {modelGroups.size === 0 && <div className="picker-empty">暂无可用模型</div>}
+                {[...modelGroups.entries()].map(([provider, list]) => (
+                  <div key={provider} className="picker-group">
+                    <div className="picker-group-title">{provider}</div>
+                    {list.map((m) => {
+                      const key = `${m.provider}/${m.id}`;
+                      return (
+                        <button
+                          key={key}
+                          className={`picker-item${currentModelKey === key ? " sel" : ""}`}
+                          onClick={() => {
+                            onSetModel(m.provider, m.id);
+                            setModelOpen(false);
+                          }}
+                        >
+                          <span className="picker-item-name">{m.displayName || m.id}</span>
+                          {m.displayName && m.displayName !== m.id && <span className="picker-item-id">{m.id}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="picker-wrap">
+            <button
+              className={`icon-btn picker-btn${agentOpen ? " active" : ""}`}
+              title="选择智能体"
+              onClick={() => {
+                setAgentOpen((v) => !v);
+                setModelOpen(false);
+                setTaskModeOpen(false);
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="5" y="8" width="14" height="11" rx="2" />
+                <path d="M12 8V4" />
+                <circle cx="12" cy="3" r="1" />
+                <path d="M9 13h.01M15 13h.01" />
+                <path d="M9 16h6" />
+              </svg>
+            </button>
+            {agentOpen && <div className="picker-veil" onClick={() => setAgentOpen(false)} />}
+            {agentOpen && (
+              <div className="picker-pop">
+                <div className="picker-head">选择智能体</div>
+                {agents.map((a) => (
+                  <button
+                    key={a.id}
+                    className={`picker-item${activeAgentId === a.id ? " sel" : ""}`}
+                    onClick={() => {
+                      onSetAgent(a.id);
+                      setAgentOpen(false);
+                    }}
+                  >
+                    <span className="picker-item-name">{a.name}</span>
+                    {a.description && <span className="picker-item-desc">{a.description}</span>}
+                  </button>
+                ))}
+                {agents.length === 0 && <div className="picker-empty">暂无智能体</div>}
+              </div>
+            )}
+          </div>
           <div className="task-mode-wrap">
             <button
               className={`icon-btn task-mode-btn${oneShot.subagents || oneShot.goals ? " active" : ""}`}

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { AgentProfile, AppState, SessionMeta, WorkspaceInfo } from "../types";
+import type { AppState, SessionMeta, WorkspaceInfo } from "../types";
 import type { PanelTab } from "../App";
 import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
@@ -8,7 +8,6 @@ interface Props {
   state: AppState | null;
   sessions: SessionMeta[];
   workspaces: WorkspaceInfo[];
-  agents: AgentProfile[];
   connected: boolean;
   theme: "dark" | "light";
   onToggleTheme: () => void;
@@ -19,15 +18,13 @@ interface Props {
   onSwitchWorkspace: (path: string) => void;
   onAddWorkspace: (path: string) => void;
   onRefreshSessions: () => void;
-  onSetModel: (provider: string, id: string) => void;
   onSetThinking: (level: string) => void;
-  onSetAgent: (id: string) => void;
   onPickFile: (relPath: string, name: string) => void;
   onPreviewFile: (relPath: string, name: string) => void;
   onCollapse: () => void;
 }
 
-type SettingsSectionId = "runtime" | "models" | "extensions";
+type SettingsSectionId = "models" | "extensions" | "agents";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -65,26 +62,17 @@ function SettingsGroup({ id, title, badge, open, onToggle, children }: SettingsG
 }
 
 export function Sidebar(props: Props) {
-  const { state, sessions, workspaces, agents, connected, activePanel, theme } = props;
+  const { state, sessions, workspaces, connected, activePanel, theme } = props;
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
 
-  const models = state?.availableModels ?? [];
   const current = state?.model;
   const currentKey = current ? `${current.provider}/${current.id}` : "";
   const currentModelName = current?.displayName && !/^unknown(?:[/]unknown)?$/i.test(current.displayName)
     ? current.displayName
     : "";
-
-  // group models by provider
-  const groups = new Map<string, typeof models>();
-  for (const m of models) {
-    const g = groups.get(m.provider) ?? [];
-    g.push(m);
-    groups.set(m.provider, g);
-  }
 
   const mcp = state?.mcp;
   const mcpServers = mcp?.servers ?? [];
@@ -93,7 +81,7 @@ export function Sidebar(props: Props) {
   const toggleSettings = () => {
     const next = !settingsOpen;
     setSettingsOpen(next);
-    if (next) setSettingsSection((s) => s ?? "runtime");
+    if (next) setSettingsSection((s) => s ?? "models");
   };
 
   const openPanel = (tab: PanelTab) => {
@@ -241,79 +229,63 @@ export function Sidebar(props: Props) {
               <button className="icon-btn" title="关闭设置" onClick={() => setSettingsOpen(false)}>×</button>
             </div>
             <div className="settings-accordion">
-              <SettingsGroup id="runtime" title="运行设置" open={settingsSection === "runtime"} onToggle={toggleSettingsSection}>
-                <div className="sel-row">
-                  <label>助手</label>
-                  <select value={state?.activeAgent?.id ?? "default"} onChange={(e) => props.onSetAgent(e.target.value)}>
-                    {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-                  </select>
-                  <button className="icon-btn row-action-btn" title="Agent 管理" onClick={() => openPanel("agents")}>•••</button>
-                </div>
-                <div className="sel-row">
-                  <label>模型</label>
-                  <select
-                    value={currentKey}
-                    onChange={(e) => {
-                      const [provider, ...rest] = e.target.value.split("/");
-                      const id = rest.join("/");
-                      if (provider && id) props.onSetModel(provider, id);
-                    }}
-                  >
-                    {currentKey === "" && <option value="">（默认）</option>}
-                    {[...groups.entries()].map(([provider, list]) => (
-                      <optgroup key={provider} label={provider}>
-                        {list.map((m) => (
-                          <option key={`${provider}/${m.id}`} value={`${provider}/${m.id}`}>
-                            {m.id}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-                <div className="sel-row">
-                  <label>思考</label>
-                  <select
-                    value={state?.thinkingLevel ?? "off"}
-                    onChange={(e) => props.onSetThinking(e.target.value)}
-                  >
-                    {THINKING_LEVELS.map((l) => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </SettingsGroup>
+            <SettingsGroup
+              id="models"
+              title="模型管理"
+              badge={currentModelName || currentKey || "默认"}
+              open={settingsSection === "models"}
+              onToggle={toggleSettingsSection}
+            >
+              <div className="settings-status">
+                <span>当前模型</span>
+                <span className="settings-current">{currentModelName || currentKey || "默认"}</span>
+              </div>
+              <div className="sel-row" style={{ marginTop: "8px" }}>
+                <label>思考强度</label>
+                <select
+                  value={state?.thinkingLevel ?? "off"}
+                  onChange={(e) => props.onSetThinking(e.target.value)}
+                >
+                  {THINKING_LEVELS.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-actions">
+                <button className="mini-btn primary" onClick={() => openPanel("models")}>打开模型管理</button>
+              </div>
+            </SettingsGroup>
 
-              <SettingsGroup
-                id="models"
-                title="模型管理"
-                badge={currentModelName || currentKey || "默认"}
-                open={settingsSection === "models"}
-                onToggle={toggleSettingsSection}
-              >
-                <div className="settings-status">
-                  <span>当前模型</span>
-                  <span className="settings-current">{currentModelName || currentKey || "默认"}</span>
-                </div>
-                <div className="settings-actions">
-                  <button className="mini-btn primary" onClick={() => openPanel("models")}>打开模型管理</button>
-                </div>
-              </SettingsGroup>
+            <SettingsGroup
+              id="agents"
+              title="智能体配置"
+              badge={state?.activeAgent?.name || "默认"}
+              open={settingsSection === "agents"}
+              onToggle={toggleSettingsSection}
+            >
+              <div className="settings-status">
+                <span>当前智能体</span>
+                <span className="settings-current">{state?.activeAgent?.name || "默认"}</span>
+              </div>
+              <div className="settings-actions">
+                <button className="mini-btn primary" onClick={() => openPanel("agents")}>打开智能体配置</button>
+              </div>
+            </SettingsGroup>
 
-              <SettingsGroup
-                id="extensions"
-                title="扩展配置"
-                badge={`MCP ${connectedCount}/${mcpServers.length}`}
-                open={settingsSection === "extensions"}
-                onToggle={toggleSettingsSection}
-              >
-                <div className="settings-actions">
-                  <button className="mini-btn" onClick={() => openPanel("mcp")}>MCP 管理</button>
-                  <button className="mini-btn" onClick={() => openPanel("skills")}>Skills</button>
-                </div>
-              </SettingsGroup>
+            <SettingsGroup
+              id="extensions"
+              title="扩展配置"
+              badge={`MCP ${connectedCount}/${mcpServers.length}`}
+              open={settingsSection === "extensions"}
+              onToggle={toggleSettingsSection}
+            >
+              <div className="settings-actions">
+                <button className="mini-btn" onClick={() => openPanel("mcp")}>MCP 管理</button>
+                <button className="mini-btn" onClick={() => openPanel("skills")}>Skills</button>
+              </div>
+            </SettingsGroup>
             </div>
           </div>
         </div>

@@ -381,9 +381,16 @@ export default function App() {
       <Composer
         ref={composerRef}
         isStreaming={state?.isStreaming ?? false}
-        modelName={state?.model?.displayName ?? ""}
+        model={state?.model ?? null}
+        models={state?.availableModels ?? []}
+        activeAgentId={state?.activeAgent?.id}
+        agents={agents}
         onSend={send}
         onAbort={() => socketRef.current?.send({ type: "abort" })}
+        onSetModel={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
+        onSetAgent={(id) => {
+          void setActiveAgent(id).catch((e) => toast("error", e.message));
+        }}
         onError={(m) => toast("error", m)}
         oneShot={oneShot}
         onTaskModeChange={(next) => setOneShot(next)}
@@ -416,7 +423,6 @@ export default function App() {
           state={state}
           sessions={sessions}
           workspaces={workspaces}
-          agents={agents}
           connected={connected}
           theme={theme}
           onToggleTheme={toggleTheme}
@@ -430,11 +436,7 @@ export default function App() {
           onPreviewFile={(path, name) => setPreview({ path, name })}
           onCollapse={() => setSidebarOpen(false)}
           onRefreshSessions={() => void refreshSessions()}
-          onSetModel={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
           onSetThinking={(level) => socketRef.current?.send({ type: "set_thinking", level })}
-          onSetAgent={(id) => {
-            void setActiveAgent(id).catch((e) => toast("error", e.message));
-          }}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>

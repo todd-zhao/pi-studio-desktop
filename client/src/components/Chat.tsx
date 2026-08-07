@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ClientMessage } from "../types";
 import { Message } from "./Message";
+import { Markdown } from "./markdown";
 import type { RenderedMessage } from "../App";
 
 interface LiveState {
@@ -79,7 +80,8 @@ export function Chat({ messages, live, queued, isStreaming }: Props) {
             )}
             {live.liveText && (
               <div className="msg-body">
-                <div className="live-cursor">{live.liveText}</div>
+                <Markdown text={live.liveText} />
+                <span className="live-cursor" aria-hidden="true" />
               </div>
             )}
             {!live.liveText && !live.liveThinking && live.liveTools.length === 0 && (
