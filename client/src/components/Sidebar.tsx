@@ -1,16 +1,18 @@
-import { useState, type ReactNode } from "react";
-import type { AppState, ProjectSummary, SessionMeta, WorkspaceInfo } from "../types";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import type { AppState, ProjectSummary, SessionMeta, WechatStatus, WorkspaceInfo } from "../types";
 import type { PanelTab } from "../App";
 import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
 
 interface Props {
+  style?: CSSProperties;
   state: AppState | null;
   sessions: SessionMeta[];
   projects: ProjectSummary[];
   selectedProjectId: string | null;
   workspaces: WorkspaceInfo[];
   connected: boolean;
+  wechatStatus?: WechatStatus | null;
   theme: "dark" | "light";
   onToggleTheme: () => void;
   activePanel: PanelTab | null;
@@ -20,6 +22,8 @@ interface Props {
   onDeleteSession: (file: string) => void;
   onProjectSelect: (id: string | null) => void;
   onManageProjects: () => void;
+  onNewProjectSession: (projectId: string) => void;
+  onDeleteProject: (projectId: string) => void;
   onAssignSession: (file: string, projectId: string | null) => void;
   onSwitchWorkspace: (path: string) => void;
   onAddWorkspace: (path: string) => void;
@@ -30,7 +34,7 @@ interface Props {
   onCollapse: () => void;
 }
 
-type SettingsSectionId = "models" | "extensions" | "agents";
+type SettingsSectionId = "models" | "extensions" | "agents" | "wechat";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -68,19 +72,142 @@ function SettingsGroup({ id, title, badge, open, onToggle, children }: SettingsG
 }
 
 export function Sidebar(props: Props) {
-  const { state, sessions, projects, selectedProjectId, workspaces, connected, activePanel, theme } = props;
+  const { state, sessions, projects, workspaces, connected, wechatStatus, activePanel, theme, style } = props;
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
   const [confirmingDeleteFile, setConfirmingDeleteFile] = useState<string | null>(null);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(new Set());
+  const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string | null>(null);
 
-  const visibleSessions = sessions.filter((session) => {
-    if (selectedProjectId === null) return true;
-    if (selectedProjectId === "__unassigned__") return !session.projectId;
-    return session.projectId === selectedProjectId;
-  });
+  const sessionsByProject = new Map<string, SessionMeta[]>();
+  const unassignedSessions: SessionMeta[] = [];
+  for (const session of sessions) {
+    if (session.projectId) {
+      const group = sessionsByProject.get(session.projectId) ?? [];
+      group.push(session);
+      sessionsByProject.set(session.projectId, group);
+    } else {
+      unassignedSessions.push(session);
+    }
+  }
 
+  // Keep the tree usable while the project summary request is still loading
+  // (or when an older runtime only returns project data on each session).
+  // This also prevents a project session from falling back to the old flat list.
+  const visibleProjects = [...projects];
+  const knownProjectIds = new Set(visibleProjects.map((project) => project.id));
+  for (const session of sessions) {
+    if (!session.projectId || knownProjectIds.has(session.projectId)) continue;
+    knownProjectIds.add(session.projectId);
+    visibleProjects.push({
+      id: session.projectId,
+      name: session.projectName?.trim() || "未命名项目",
+      description: "",
+      sessionCount: sessionsByProject.get(session.projectId)?.length ?? 0,
+      memoryCount: 0,
+      documentCount: 0,
+      updatedAt: session.createdAt ?? Date.now(),
+    });
+  }
+
+  const renderSession = (session: SessionMeta, nested = false) => (
+    <div
+      key={session.id}
+      className={`session-item tree-session-item${nested ? " nested" : ""} ${state?.sessionFile === session.file ? "active" : ""}`}
+      onClick={() => props.onSwitchSession(session.file)}
+    >
+      {nested && <span className="tree-branch" aria-hidden="true" />}
+      <div className="name tree-session-name" title={session.name || session.firstMessage || session.file.split(/[\\/]/).pop()}>
+        <span className="tree-session-label">{session.name || session.firstMessage || session.file.split(/[\\/]/).pop()}</span>
+        {!session.projectId && (
+          <select
+            value={session.projectId ?? ""}
+            title="归档到项目"
+            onChange={(event) => { event.stopPropagation(); props.onAssignSession(session.file, event.target.value || null); }}
+            className="tree-session-project-select"
+          >
+            <option value="">未归档</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+        )}
+        <button
+          className={`session-delete-btn${confirmingDeleteFile === session.file ? " confirming" : ""}`}
+          title={confirmingDeleteFile === session.file ? "再次点击确认删除" : "删除对话"}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (confirmingDeleteFile === session.file) {
+              setConfirmingDeleteFile(null);
+              props.onDeleteSession(session.file);
+            } else {
+              setConfirmingDeleteFile(session.file);
+              window.setTimeout(() => setConfirmingDeleteFile((current) => current === session.file ? null : current), 3000);
+            }
+          }}
+        >
+          {confirmingDeleteFile === session.file ? "确认" : "×"}
+        </button>
+      </div>
+      <div className="meta">{session.messageCount} 条消息 · {fmtTime(session.createdAt)}</div>
+    </div>
+  );
+
+  const renderProjectGroup = (project: ProjectSummary) => {
+    const projectSessions = sessionsByProject.get(project.id) ?? [];
+    const collapsed = collapsedProjectIds.has(project.id);
+    const confirming = confirmingDeleteProjectId === project.id;
+    return (
+      <div className="project-tree-group" key={project.id}>
+        <div className="project-tree-head" onClick={() => setCollapsedProjectIds((current) => {
+          const next = new Set(current);
+          if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
+          return next;
+        })}>
+          <button
+            className="project-tree-toggle"
+            aria-label={collapsed ? "展开项目" : "折叠项目"}
+            title={collapsed ? "展开项目" : "折叠项目"}
+          >
+            {collapsed ? "▸" : "▾"}
+          </button>
+          <span className="project-tree-name" title={project.name}>{project.name}</span>
+          <div className="project-tree-actions">
+            <button
+              className="project-tree-action"
+              title="在此项目中新建对话"
+              onClick={(event) => { event.stopPropagation(); props.onNewProjectSession(project.id); }}
+            >
+              ＋
+            </button>
+            <button
+              className={`project-tree-action project-tree-delete${confirming ? " confirming" : ""}`}
+              title={confirming ? "再次点击确认删除项目" : "删除项目"}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (confirming) {
+                  setConfirmingDeleteProjectId(null);
+                  props.onDeleteProject(project.id);
+                } else {
+                  setConfirmingDeleteProjectId(project.id);
+                  window.setTimeout(() => setConfirmingDeleteProjectId((current) => current === project.id ? null : current), 3000);
+                }
+              }}
+            >
+              {confirming ? "确认" : "×"}
+            </button>
+          </div>
+        </div>
+        {!collapsed && (
+          <div className="project-tree-children">
+            {projectSessions.length > 0
+              ? projectSessions.map((session) => renderSession(session, true))
+              : <div className="project-tree-empty">暂无会话</div>}
+          </div>
+        )}
+      </div>
+    );
+  };
   const current = state?.model;
   const currentKey = current ? `${current.provider}/${current.id}` : "";
   const currentModelName = current?.displayName && !/^unknown(?:[/]unknown)?$/i.test(current.displayName)
@@ -107,7 +234,7 @@ export function Sidebar(props: Props) {
   };
 
   return (
-    <div className="sidebar">
+    <div className="sidebar" style={style}>
       <div className="sidebar-header">
         <div className="sidebar-brand-row">
           <div className="logo">
@@ -192,47 +319,32 @@ export function Sidebar(props: Props) {
           </div>
       </div>
       {sideTab === "sessions" ? (
-        <div className="session-list">
-            <div className="sel-row" style={{ padding: "4px 8px 8px" }}>
-              <select className="grow" value={selectedProjectId ?? ""} onChange={(event) => props.onProjectSelect(event.target.value || null)} title="按项目筛选会话">
-                <option value="">全部会话</option>
-                <option value="__unassigned__">未归档会话</option>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-              <button className="icon-btn" title="管理项目" onClick={props.onManageProjects}>+</button>
+        <div className="session-list project-tree-list">
+          {visibleProjects.map(renderProjectGroup)}
+          <div className="project-tree-group unassigned-project-tree">
+            <div className="project-tree-head" onClick={() => setCollapsedProjectIds((current) => {
+              const next = new Set(current);
+              if (next.has("__unassigned__")) next.delete("__unassigned__"); else next.add("__unassigned__");
+              return next;
+            })}>
+              <button className="project-tree-toggle" aria-label="展开或折叠未归档会话" title="展开或折叠未归档会话">
+                {collapsedProjectIds.has("__unassigned__") ? "▸" : "▾"}
+              </button>
+              <span className="project-tree-name">未归档会话</span>
             </div>
-            {visibleSessions.length === 0 && (
-              <div style={{ padding: "8px 10px", color: "var(--text-3)", fontSize: "12px" }}>
-                暂无符合条件的对话
+            {!collapsedProjectIds.has("__unassigned__") && (
+              <div className="project-tree-children">
+                {unassignedSessions.length > 0
+                  ? unassignedSessions.map((session) => renderSession(session, true))
+                  : <div className="project-tree-empty">暂无会话</div>}
               </div>
             )}
-            {visibleSessions.map((s) => (
-              <div
-                key={s.id}
-                className={`session-item ${state?.sessionFile === s.file ? "active" : ""}`}
-                onClick={() => props.onSwitchSession(s.file)}
-              >
-                <div className="name" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.name || s.firstMessage || s.file.split(/[\\/]/).pop()}</span>
-                  <select
-                    value={s.projectId ?? ""}
-                    title="归档到项目"
-                    onClick={(event) => event.stopPropagation()}
-                    onChange={(event) => { event.stopPropagation(); props.onAssignSession(s.file, event.target.value || null); }}
-                    style={{ maxWidth: 24, width: 24, padding: 0, opacity: 0.75 }}
-                  >
-                    <option value="">·</option>
-                    {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                  </select>
-                  <button className={`session-delete-btn${confirmingDeleteFile === s.file ? " confirming" : ""}`} title={confirmingDeleteFile === s.file ? "再次点击确认删除" : "删除对话"} onClick={(event) => { event.stopPropagation(); if (confirmingDeleteFile === s.file) { setConfirmingDeleteFile(null); props.onDeleteSession(s.file); } else { setConfirmingDeleteFile(s.file); window.setTimeout(() => setConfirmingDeleteFile((current) => current === s.file ? null : current), 3000); } }}>{confirmingDeleteFile === s.file ? "确认" : "×"}</button>
-                </div>
-                <div className="meta">
-                  {s.projectName ? `${s.projectName} · ` : ""}{s.messageCount} 条消息 · {fmtTime(s.createdAt)}
-                </div>
-              </div>
-            ))}
           </div>
-        ) : (
+          {projects.length === 0 && unassignedSessions.length === 0 && (
+            <div className="project-tree-empty standalone">暂无会话</div>
+          )}
+        </div>
+      ) : (
           <div className="session-list">
             <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} />
           </div>
@@ -252,10 +364,6 @@ export function Sidebar(props: Props) {
         <button className={`feature-btn ${activePanel === "schedules" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "schedules" ? null : "schedules")}>
           <span className="feature-icon">◷</span>
           <span>定时任务</span>
-        </button>
-        <button className={`feature-btn ${activePanel === "wechat" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "wechat" ? null : "wechat")}>
-          <span className="feature-icon">◈</span>
-          <span>微信对话</span>
         </button>
       </div>
 
@@ -322,6 +430,22 @@ export function Sidebar(props: Props) {
               <div className="settings-actions">
                 <button className="mini-btn" onClick={() => openPanel("mcp")}>MCP 管理</button>
                 <button className="mini-btn" onClick={() => openPanel("skills")}>Skills</button>
+              </div>
+            </SettingsGroup>
+
+            <SettingsGroup
+              id="wechat"
+              title="微信连接"
+              badge={wechatStatus?.phase === "connected" ? "已连接" : "未连接"}
+              open={settingsSection === "wechat"}
+              onToggle={toggleSettingsSection}
+            >
+              <div className="settings-status">
+                <span>当前状态</span>
+                <span className="settings-current">{wechatStatus?.message || "未连接"}</span>
+              </div>
+              <div className="settings-actions">
+                <button className="mini-btn primary" onClick={() => openPanel("wechat")}>打开微信连接</button>
               </div>
             </SettingsGroup>
             </div>

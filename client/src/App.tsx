@@ -1,9 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { PiSocket, assignSessionToProject, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listProjects, listSessions, removeSessionFromProject, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { PiSocket, assignSessionToProject, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listProjects, listSessions, removeProject, removeSessionFromProject, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
 import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
+import { LongTaskQueue } from "./components/LongTaskQueue";
 const McpPanel = lazy(() => import("./components/McpPanel").then((module) => ({ default: module.McpPanel })));
 const ModelsPanel = lazy(() => import("./components/ModelsPanel").then((module) => ({ default: module.ModelsPanel })));
 const SkillsPanel = lazy(() => import("./components/SkillsPanel").then((module) => ({ default: module.SkillsPanel })));
@@ -35,6 +36,16 @@ function emptyLiveSnapshot(): LiveSnapshot {
 
 function sessionKey(sessionId?: string): string {
   return sessionId ? "id:" + sessionId : "unknown";
+}
+
+function storedPaneWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const value = Number(localStorage.getItem(key));
+    if (Number.isFinite(value)) return Math.min(max, Math.max(min, value));
+  } catch {
+    /* ignore unavailable storage */
+  }
+  return fallback;
 }
 
 function buildOneShotGoal(mainText: string, supplementalText: string): string {
@@ -72,6 +83,8 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [bootStatus, setBootStatus] = useState<{ state: "booting" | "error" | "ready"; message?: string }>({ state: "booting" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth("pi-studio-sidebar-width", 264, 220, 420));
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => storedPaneWidth("pi-studio-right-panel-width", 380, 280, 600));
   const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {
@@ -106,10 +119,7 @@ export default function App() {
   const stateRef = useRef<AppState | null>(null);
   const activeSessionKeyRef = useRef("unknown");
   const liveBySessionRef = useRef(new Map<string, LiveSnapshot>());
-  const restoreRef = useRef<{
-    subagents: { enabled: boolean } | null;
-    goals: { enabled: boolean; goal: string } | null;
-  }>({ subagents: null, goals: null });
+  const restoreRef = useRef<{ subagents: { enabled: boolean } | null }>({ subagents: null });
   const subagentsEnabledRef = useRef(subagentsEnabled);
   subagentsEnabledRef.current = subagentsEnabled;
   const goalsEnabledRef = useRef(goalsEnabled);
@@ -118,6 +128,52 @@ export default function App() {
   goalTextRef.current = goalText;
   const oneShotRef = useRef(oneShot);
   oneShotRef.current = oneShot;
+  const resizeRef = useRef<{ target: "sidebar" | "right"; startX: number; startWidth: number } | null>(null);
+
+  const startResize = useCallback((target: "sidebar" | "right", event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizeRef.current = {
+      target,
+      startX: event.clientX,
+      startWidth: target === "sidebar" ? sidebarWidth : rightPanelWidth,
+    };
+    document.body.classList.add("is-resizing-columns");
+  }, [rightPanelWidth, sidebarWidth]);
+
+  const stopResize = useCallback(() => {
+    resizeRef.current = null;
+    document.body.classList.remove("is-resizing-columns");
+  }, []);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const resize = resizeRef.current;
+      if (!resize) return;
+      const delta = event.clientX - resize.startX;
+      if (resize.target === "sidebar") {
+        setSidebarWidth(Math.min(420, Math.max(220, resize.startWidth + delta)));
+      } else {
+        setRightPanelWidth(Math.min(600, Math.max(280, resize.startWidth - delta)));
+      }
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+    };
+  }, [stopResize]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("pi-studio-sidebar-width", String(sidebarWidth));
+      localStorage.setItem("pi-studio-right-panel-width", String(rightPanelWidth));
+    } catch {
+      /* ignore unavailable storage */
+    }
+  }, [rightPanelWidth, sidebarWidth]);
   stateRef.current = state;
 
   const toast = useCallback((level: Toast["level"], message: string) => {
@@ -135,19 +191,11 @@ export default function App() {
 
   const restoreOneShot = useCallback(() => {
     const restore = restoreRef.current;
-    if (restore.subagents) {
-      const previous = restore.subagents;
-      restore.subagents = null;
-      setSubagentsEnabled(previous.enabled);
-      void setSubagents(previous.enabled).catch((e) => toast("error", e.message));
-    }
-    if (restore.goals) {
-      const previous = restore.goals;
-      restore.goals = null;
-      setGoalsEnabled(previous.enabled);
-      setGoalText(previous.goal);
-      void setGoals(previous.enabled, previous.goal).catch((e) => toast("error", e.message));
-    }
+    if (!restore.subagents) return;
+    const previous = restore.subagents;
+    restore.subagents = null;
+    setSubagentsEnabled(previous.enabled);
+    void setSubagents(previous.enabled).catch((e) => toast("error", e.message));
   }, [toast]);
 
   const handleEvent = useCallback(
@@ -408,28 +456,37 @@ export default function App() {
     }
   }, [sessions, toast]);
 
+  const newProjectSession = useCallback((projectId: string) => {
+    socketRef.current?.send({ type: "new_session", projectId });
+  }, []);
+
+  const deleteProject = useCallback(async (projectId: string) => {
+    try {
+      await removeProject(projectId);
+      setProjects(await listProjects());
+      await refreshSessions();
+      toast("ok", "项目已删除");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [refreshSessions, toast]);
+
   const send = useCallback(
     async (text: string, attachments?: AttachmentInfo[], refs?: string[]) => {
       const one = oneShotRef.current;
+      const longGoal = one.goals ? buildOneShotGoal(text, goalTextRef.current) : undefined;
       try {
         if (one.subagents && !subagentsEnabledRef.current) {
           restoreRef.current.subagents = { enabled: subagentsEnabledRef.current };
           await setSubagents(true);
           setSubagentsEnabled(true);
         }
-        if (one.goals) {
-          if (!restoreRef.current.goals) {
-            restoreRef.current.goals = { enabled: goalsEnabledRef.current, goal: goalTextRef.current };
-          }
-          await setGoals(true, buildOneShotGoal(text, goalTextRef.current));
-          setGoalsEnabled(true);
-        }
       } catch (e) {
         toast("error", (e as Error).message);
         return;
       }
       if (one.subagents || one.goals) setOneShot({ subagents: false, goals: false });
-      socketRef.current?.send({ type: "prompt", text, attachments, refs });
+      socketRef.current?.send({ type: "prompt", text, attachments, refs, longGoal });
     },
     [toast],
   );
@@ -508,6 +565,11 @@ export default function App() {
         onSaveMemory={saveMessageAsMemory}
         canSaveMemory={Boolean(state?.project?.id)}
       />
+      <LongTaskQueue
+        tasks={state?.longTasks ?? []}
+        onCancel={(id) => socketRef.current?.send({ type: "cancel_long_task", id })}
+        onClear={() => socketRef.current?.send({ type: "clear_long_tasks" })}
+      />
       <Composer
         ref={composerRef}
         isStreaming={state?.isStreaming ?? false}
@@ -538,7 +600,10 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={{ "--right-panel-width": `${rightPanelWidth}px` } as CSSProperties}
+    >
       {bootStatus.state !== "ready" && (
         <div className="boot-overlay" role="status" aria-live="polite">
           <div className="boot-card">
@@ -552,11 +617,13 @@ export default function App() {
       {sidebarOpen ? (
         <Sidebar
           state={state}
+          style={{ width: sidebarWidth, minWidth: sidebarWidth, flexBasis: sidebarWidth }}
           sessions={sessions}
           projects={projects}
           selectedProjectId={selectedProjectId}
           workspaces={workspaces}
           connected={connected}
+          wechatStatus={wechatStatus}
           theme={theme}
           onToggleTheme={toggleTheme}
           activePanel={panel}
@@ -566,6 +633,8 @@ export default function App() {
           onDeleteSession={handleDeleteSession}
           onProjectSelect={setSelectedProjectId}
           onManageProjects={() => setPanel("projects")}
+          onNewProjectSession={newProjectSession}
+          onDeleteProject={(projectId) => void deleteProject(projectId)}
           onAssignSession={(file, projectId) => void assignSession(file, projectId)}
           onSwitchWorkspace={switchWorkspace}
           onAddWorkspace={addWorkspace}
@@ -579,6 +648,16 @@ export default function App() {
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>
           »
         </button>
+      )}
+      {sidebarOpen && (
+        <div
+          className="pane-resizer sidebar-resizer"
+          role="separator"
+          aria-label="调整侧栏宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => startResize("sidebar", event)}
+          title="拖动调整侧栏宽度"
+        />
       )}
       <div className={`main ${isEmpty ? "has-empty" : ""}`}>
         <div className="main-header">
@@ -611,6 +690,16 @@ export default function App() {
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>
       <Suspense fallback={panel || preview ? <div className="right-panel panel-loading">加载面板中…</div> : null}>
+      {(panel || preview) && (
+        <div
+          className="pane-resizer right-panel-resizer"
+          role="separator"
+          aria-label="调整右侧面板宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => startResize("right", event)}
+          title="拖动调整右侧面板宽度"
+        />
+      )}
       {panel === "mcp" && (
         <div className="right-panel">
           <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />

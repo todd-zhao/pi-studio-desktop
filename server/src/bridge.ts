@@ -24,6 +24,7 @@ import type { McpConfig } from "pi-mcp-adapter/types";
 import type { McpStatusSnapshot } from "./types.ts";
 import type { WechatCommandAction } from "./types.ts";
 import { wechatExtension } from "./extensions/wechat.ts";
+import { decodeTextBuffer, repairUploadedFilename } from "./textEncoding.ts";
 import type {
   AppState,
   AgentProfile,
@@ -42,6 +43,7 @@ import type {
   ProjectDocument,
   ProjectMemoryType,
   ProjectSearchResult,
+  LongTask,
 } from "./types.ts";
 
 const appRequire = createRequire(import.meta.url);
@@ -156,6 +158,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private settingsManager!: SettingsManager;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly promptQueues = new Map<string, Promise<void>>();
+  private readonly longTasks = new Map<string, LongTask[]>();
   private activeRuntimeId = "";
   private eventBus!: ReturnType<typeof createEventBus>;
   private availableModels: ModelInfo[] = [];
@@ -382,6 +385,43 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   // ------------------------------------------------------------------ actions
 
+  private updateLongTask(entry: RuntimeEntry, task: LongTask, patch: Partial<LongTask>): void {
+    Object.assign(task, patch);
+    if (entry.id === this.activeRuntimeId) this.pushState();
+  }
+
+  private buildPromptText(text: string, attachments?: AttachmentInfo[], refs?: string[], longGoal?: string): { promptText: string; images: Array<{ type: "image"; data: string; mimeType: string }> } {
+    const images = (attachments ?? [])
+      .filter((a) => a.data)
+      .map((a) => ({ type: "image" as const, data: a.data!, mimeType: a.mediaType }));
+    let promptText = text;
+    if (longGoal?.trim()) {
+      promptText = "## Active long-running goal and audit policy\n<active-goal>\n" + longGoal.trim() + "\n</active-goal>\nTreat this as the durable objective for the current work. Break it into verifiable milestones, keep checking completed work against the objective and actual evidence, and do not report the goal complete until its acceptance criteria are demonstrably satisfied.\n\n## User request\n" + promptText;
+    }
+    if (refs && refs.length > 0) {
+      promptText += "\n\n[Referenced workspace files]\n" + refs.map((r) => "- " + r).join("\n");
+    }
+    const files = attachments ?? [];
+    if (files.length > 0) {
+      const notes = files.map((a) => {
+        const size = a.size > 1024 * 1024 ? (a.size / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(a.size / 1024)) + " KB";
+        return "- " + a.name + " (" + size + ", path: " + a.path + ")";
+      }).join("\n");
+      promptText += "\n\n[User uploaded " + files.length + " attachment(s)]\n" + notes + "\n\nAttachments are saved in the workspace and can be read with the available tools; image attachments are also provided as image content.";
+    }
+    return { promptText, images };
+  }
+
+  private async runPrompt(entry: RuntimeEntry, text: string, attachments?: AttachmentInfo[], refs?: string[], longGoal?: string): Promise<void> {
+    const { promptText, images } = this.buildPromptText(text, attachments, refs, longGoal);
+    const session = entry.runtime.session;
+    if (session.isStreaming) {
+      await session.followUp(promptText, images.length ? images : undefined);
+    } else {
+      await session.prompt(promptText, images.length ? { images } : undefined);
+    }
+  }
+
   private async withPromptLock<T>(entry: RuntimeEntry, action: () => Promise<T>): Promise<T> {
     const previous = (this.promptQueues.get(entry.id) ?? Promise.resolve()).catch(() => undefined);
     let release!: () => void;
@@ -401,36 +441,51 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async prompt(text: string, attachments?: AttachmentInfo[], refs?: string[]): Promise<void> {
-    const images = (attachments ?? [])
-      .filter((a) => a.data)
-      .map((a) => ({ type: "image" as const, data: a.data!, mimeType: a.mediaType }));
-
-    let promptText = text;
-    if (refs && refs.length > 0) {
-      promptText += "\n\n[用户引用了以下工作区文件，请按需读取]\n" + refs.map((r) => `- ${r}`).join("\n");
-    }
-    const files = attachments ?? [];
-    if (files.length > 0) {
-      const notes = files
-        .map((a) => {
-          const size = a.size > 1024 * 1024 ? `${(a.size / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(a.size / 1024))} KB`;
-          return `- ${a.name}（${size}，路径：${a.path}）`;
-        })
-        .join("\n");
-      promptText += `\n\n[用户上传了 ${files.length} 个附件]\n${notes}\n\n附件已保存到工作区，可通过 read / grep / bash 等工具读取；其中的图片已作为图像内容提供给你。`;
-    }
-
     const entry = this.activeEntry();
-    await this.withPromptLock(entry, async () => {
-      const session = entry.runtime.session;
-      if (session.isStreaming) {
-        await session.followUp(promptText, images.length ? images : undefined);
-      } else {
-        await session.prompt(promptText, images.length ? { images } : undefined);
-      }
-    });
+    await this.withPromptLock(entry, () => this.runPrompt(entry, text, attachments, refs));
   }
 
+  async enqueueLongTask(text: string, goal: string, attachments?: AttachmentInfo[], refs?: string[]): Promise<LongTask> {
+    const entry = this.activeEntry();
+    const task: LongTask = { id: randomUUID(), text, goal, status: "queued", createdAt: Date.now() };
+    const tasks = this.longTasks.get(entry.id) ?? [];
+    tasks.push(task);
+    this.longTasks.set(entry.id, tasks);
+    this.pushState();
+
+    await this.withPromptLock(entry, async () => {
+      if (task.status === "cancelled") return;
+      this.updateLongTask(entry, task, { status: "running", startedAt: Date.now() });
+      try {
+        await this.runPrompt(entry, text, attachments, refs, goal);
+        this.updateLongTask(entry, task, { status: "completed", finishedAt: Date.now() });
+      } catch (error) {
+        this.updateLongTask(entry, task, { status: "failed", finishedAt: Date.now(), error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    });
+    return task;
+  }
+
+  cancelLongTask(id: string): void {
+    for (const [runtimeId, tasks] of this.longTasks) {
+      const task = tasks.find((item) => item.id === id);
+      if (!task || task.status !== "queued") continue;
+      task.status = "cancelled";
+      task.finishedAt = Date.now();
+      if (runtimeId === this.activeRuntimeId) this.pushState();
+      return;
+    }
+  }
+
+  clearLongTasks(): void {
+    const tasks = this.longTasks.get(this.activeRuntimeId);
+    if (!tasks) return;
+    const remaining = tasks.filter((task) => task.status === "queued" || task.status === "running");
+    if (remaining.length === tasks.length) return;
+    this.longTasks.set(this.activeRuntimeId, remaining);
+    this.pushState();
+  }
   async steer(text: string): Promise<void> {
     await this.activeEntry().runtime.session.steer(text);
   }
@@ -443,9 +498,11 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     await this.activeEntry().runtime.session.abort();
   }
 
-  async newSession(): Promise<void> {
+  async newSession(projectId?: string): Promise<void> {
     const active = this.activeEntry();
-    const inheritedProject = this.projectForSessionFile(active.runtime.session.sessionFile);
+    const inheritedProject = projectId
+      ? this.requireProject(projectId)
+      : this.projectForSessionFile(active.runtime.session.sessionFile);
     const sessionDir = active.runtime.session.sessionManager.getSessionDir();
     const entry = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
     this.runtimes.set(entry.id, entry);
@@ -497,6 +554,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (runtime) {
       this.runtimes.delete(runtime.id);
       this.promptQueues.delete(runtime.id);
+      this.longTasks.delete(runtime.id);
       for (const fn of runtime.disposeFns) fn();
       runtime.disposeFns = [];
       try { await runtime.runtime.dispose(); } catch { /* ignore */ }
@@ -711,7 +769,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
         ...project,
         sessionFiles: Array.isArray(project.sessionFiles) ? project.sessionFiles.map((file) => resolve(file)) : [],
         memories: Array.isArray(project.memories) ? project.memories : [],
-        documents: Array.isArray(project.documents) ? project.documents : [],
+        documents: Array.isArray(project.documents)
+          ? project.documents.map((document) => ({ ...document, name: repairUploadedFilename(document.name) }))
+          : [],
       })) : [];
     } catch {
       this.projects = [];
@@ -753,7 +813,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (size > 8 * 1024 * 1024) return "";
     const ext = extname(absolute).toLowerCase();
     if ([".txt", ".md", ".markdown", ".json", ".csv", ".ts", ".tsx", ".js", ".jsx", ".css", ".html", ".htm", ".xml", ".yaml", ".yml", ".log"].includes(ext)) {
-      return readFileSync(absolute, "utf8").slice(0, 1_000_000);
+      return decodeTextBuffer(readFileSync(absolute)).slice(0, 1_000_000);
     }
     const buffer = readFileSync(absolute);
     const parsers = await import("./parsers.ts");
@@ -805,7 +865,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       if (!existsSync(file)) continue;
       let text = "";
       try {
-        const lines = readFileSync(file, "utf8").split(/\r?\n/);
+        const lines = decodeTextBuffer(readFileSync(file)).split(/\r?\n/);
         text = lines.map((line) => { try { return this.extractSearchText(JSON.parse(line)); } catch { return ""; } }).filter(Boolean).join("\n");
       } catch { continue; }
       const hit = this.makeSnippet(text, needle);
@@ -1018,7 +1078,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       for (const document of project.documents) {
         if (budget <= 0 || !document.mime?.startsWith("text/") || (document.size ?? 0) > 200000) continue;
         try {
-          const text = readFileSync(document.path, "utf8").slice(0, Math.min(8000, budget));
+          const text = decodeTextBuffer(readFileSync(document.path)).slice(0, Math.min(8000, budget));
           if (text.trim()) { excerpts.push("### " + document.name + "\n" + text); budget -= text.length; }
         } catch { /* document may have moved; keep its reference */ }
       }
@@ -1167,7 +1227,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       size,
       mime,
       isBinary: false,
-      content: chunk.toString("utf8"),
+      content: decodeTextBuffer(chunk),
       truncated: size > chunk.length,
     };
   }
@@ -1450,6 +1510,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       mcp: this.lastMcpStatus as unknown as AppState["mcp"],
       sessionFile: session?.sessionFile,
       sessionId: session?.sessionId,
+      longTasks: [...(this.longTasks.get(this.activeRuntimeId) ?? [])],
       project: this.projectForSessionFile(session?.sessionFile)
         ? this.projectSummary(this.projectForSessionFile(session?.sessionFile) as Project)
         : null,

@@ -166,6 +166,19 @@ export interface WechatLogEntry {
 
 export type WechatCommandAction = "connect" | "reconnect" | "disconnect";
 
+export type LongTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface LongTask {
+  id: string;
+  text: string;
+  goal: string;
+  status: LongTaskStatus;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  error?: string;
+}
+
 export interface AppState {
   messages: ClientMessage[];
   /** Pi SDK (pi-coding-agent) version, e.g. "0.83.0". */
@@ -180,14 +193,17 @@ export interface AppState {
   sessionFile?: string;
   sessionId?: string;
   project?: ProjectSummary | null;
+  longTasks: LongTask[];
 }
 
 export type ClientWsMessage =
-  | { type: "prompt"; text: string; attachments?: AttachmentInfo[]; refs?: string[] }
+  | { type: "prompt"; text: string; attachments?: AttachmentInfo[]; refs?: string[]; longGoal?: string }
+  | { type: "cancel_long_task"; id: string }
+  | { type: "clear_long_tasks" }
   | { type: "steer"; text: string }
   | { type: "followUp"; text: string }
   | { type: "abort" }
-  | { type: "new_session" }
+  | { type: "new_session"; projectId?: string }
   | { type: "list_sessions" }
   | { type: "switch_session"; file: string }
   | { type: "set_model"; provider: string; id: string }
