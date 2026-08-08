@@ -1,4 +1,4 @@
-import type { AgentProfile, AppState, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
+import type { AgentProfile, AppState, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, Project, ProjectDocument, ProjectMemory, ProjectMemoryType, ProjectSummary, ProjectSearchResult, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
 import type { ScheduledTask } from "./types";
 
 let authToken = "";
@@ -134,6 +134,89 @@ export async function getState(): Promise<AppState> {
 
 export async function listSessions(): Promise<SessionMeta[]> {
   return json<SessionMeta[]>("/api/sessions");
+}
+
+export async function deleteSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
+  return json<{ ok: boolean; activeFile?: string }>("/api/sessions", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
+// ------------------------------------------------------------ projects
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  return json<ProjectSummary[]>("/api/projects");
+}
+
+export async function getProject(id: string): Promise<Project> {
+  return json<Project>(`/api/projects/${encodeURIComponent(id)}`);
+}
+
+export async function createProject(input: { name: string; description?: string; workspacePath?: string; instructions?: string }): Promise<Project> {
+  return json<Project>("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateProject(id: string, patch: { name?: string; description?: string; workspacePath?: string | null; instructions?: string }): Promise<Project> {
+  return json<Project>(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function removeProject(id: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function assignSessionToProject(projectId: string, file: string): Promise<ProjectSummary | null> {
+  return json<ProjectSummary | null>(`/api/projects/${encodeURIComponent(projectId)}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
+export async function removeSessionFromProject(projectId: string, file: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(projectId)}/sessions`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
+export async function saveProjectMemory(projectId: string, input: { id?: string; content: string; type?: ProjectMemoryType; pinned?: boolean; sourceSessionId?: string }): Promise<ProjectMemory> {
+  return json<ProjectMemory>(`/api/projects/${encodeURIComponent(projectId)}/memories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function removeProjectMemory(projectId: string, memoryId: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(projectId)}/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+}
+
+export async function searchProject(projectId: string, query: string): Promise<ProjectSearchResult[]> {
+  const params = new URLSearchParams({ q: query });
+  return json<ProjectSearchResult[]>(`/api/projects/${encodeURIComponent(projectId)}/search?${params}`);
+}
+
+export async function addProjectDocument(projectId: string, input: { path: string; name?: string; summary?: string }): Promise<ProjectDocument> {
+  return json<ProjectDocument>(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function removeProjectDocument(projectId: string, documentId: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
 }
 
 export async function uploadFiles(files: File[]): Promise<AttachmentInfo[]> {

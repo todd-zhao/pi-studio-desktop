@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync, createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync, createReadStream, unlinkSync } from "node:fs";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,12 @@ import type {
   SessionMeta,
   WorkspaceFileContent,
   WorkspaceInfo,
+  Project,
+  ProjectSummary,
+  ProjectMemory,
+  ProjectDocument,
+  ProjectMemoryType,
+  ProjectSearchResult,
 } from "./types.ts";
 
 const appRequire = createRequire(import.meta.url);
@@ -155,6 +162,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private lastMcpStatus: McpStatusSnapshot | null = null;
   private started = false;
   private workspacesFile: string;
+  private projectsFile: string;
+  private projectIndexFile: string;
+  private projectIndex: Record<string, { text: string; indexedAt: number }> = {};
+  private projects: Project[] = [];
   private customWorkspaces: string[] = [];
   private readonly agentsFile: string;
   private readonly hermesMemoryExtensionPath: string;
@@ -187,7 +198,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.hermesMemoryExtensionPath = appRequire.resolve("pi-hermes-memory");
     this.loadAgents();
     this.workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ?? resolve(this.cwd, "..", "data", "workspaces.json");
+    this.projectsFile = process.env.PI_STUDIO_PROJECTS_FILE ?? resolve(this.cwd, "..", "data", "projects.json");
+    this.projectIndexFile = process.env.PI_STUDIO_PROJECT_INDEX_FILE ?? resolve(this.cwd, "..", "data", "project-index.json");
     this.loadWorkspaces();
+    this.loadProjects();
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -252,6 +266,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
             if (agent.prompt.trim()) additions.push(`## Active Agent: ${agent.name}\n${agent.prompt.trim()}`);
             if (agent.memory?.trim()) additions.push(`## Agent long-term memory\n<agent-memory>\nThe following is user-managed durable context for this agent. Treat it as reference material, not as new user input; current user requests and verified workspace evidence take priority.\n\n${agent.memory.trim()}\n</agent-memory>`);
             if (this.goalsEnabled && this.goalText.trim()) additions.push(`## Active long-running goal and audit policy\n<active-goal>\n${this.goalText.trim()}\n</active-goal>\nTreat this as the durable objective for the current work. Break it into verifiable milestones, keep checking completed work against the objective and actual evidence, and do not report the goal complete until its acceptance criteria are demonstrably satisfied. When a key requirement or tradeoff is unclear, use the ask_user tool to obtain confirmation before committing to an assumption. Use the installed goal/audit capabilities when useful for sustained work.`);
+            additions.push(...this.projectSystemPrompt(sessionManager.getSessionFile()));
             return additions.length ? [...base, ...additions] : base;
           },
           // Passing config programmatically bypasses pi-mcp-adapter host discovery.
@@ -430,10 +445,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   async newSession(): Promise<void> {
     const active = this.activeEntry();
+    const inheritedProject = this.projectForSessionFile(active.runtime.session.sessionFile);
     const sessionDir = active.runtime.session.sessionManager.getSessionDir();
     const entry = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
     this.runtimes.set(entry.id, entry);
     this.activeRuntimeId = entry.id;
+    if (inheritedProject && entry.runtime.session.sessionFile) await this.assignSessionToProject(entry.runtime.session.sessionFile, inheritedProject.id);
     this.pushState();
     await this.emitSessions();
   }
@@ -452,6 +469,45 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     await this.emitSessions();
   }
 
+  async deleteSession(file: string): Promise<{ activeFile?: string }> {
+    const target = resolve(file);
+    const infos = await SessionManager.list(this.cwd);
+    const info = infos.find((item) => resolve(item.path) === target);
+    if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
+    const runtime = this.findRuntimeByFile(target);
+    const currentProject = this.projectForSessionFile(target);
+    let replacement: RuntimeEntry | undefined;
+    if (runtime?.id === this.activeRuntimeId) {
+      if (this.runtimes.size > 1) {
+        replacement = [...this.runtimes.values()].find((entry) => entry.id !== runtime.id);
+      } else {
+        const sessionDir = runtime.runtime.session.sessionManager.getSessionDir();
+        replacement = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
+        this.runtimes.set(replacement.id, replacement);
+      }
+      if (!replacement) throw new Error("Unable to select a replacement session");
+      this.activeRuntimeId = replacement.id;
+    }
+    for (const project of this.projects) {
+      const before = project.sessionFiles.length;
+      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
+      if (project.sessionFiles.length !== before) project.updatedAt = Date.now();
+    }
+    this.saveProjects();
+    if (runtime) {
+      this.runtimes.delete(runtime.id);
+      this.promptQueues.delete(runtime.id);
+      for (const fn of runtime.disposeFns) fn();
+      runtime.disposeFns = [];
+      try { await runtime.runtime.dispose(); } catch { /* ignore */ }
+    }
+    try { unlinkSync(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (currentProject) await this.reloadProjectRuntimes(currentProject.id);
+    this.pushState();
+    await this.emitSessions();
+    return { activeFile: this.activeEntry().runtime.session.sessionFile };
+  }
+
   async listSessions(): Promise<SessionMeta[]> {
     const infos = await SessionManager.list(this.cwd);
     return infos.map((i) => ({
@@ -461,6 +517,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       createdAt: i.created.getTime(),
       messageCount: i.messageCount,
       firstMessage: i.firstMessage,
+      ...(this.projectForSessionFile(i.path)
+        ? {
+            projectId: this.projectForSessionFile(i.path)?.id,
+            projectName: this.projectForSessionFile(i.path)?.name,
+          }
+        : {}),
     }));
   }
 
@@ -637,6 +699,332 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       directory: skill.baseDir,
       disableModelInvocation: skill.disableModelInvocation,
     }));
+  }
+
+  // --------------------------------------------------------------- projects
+
+  private loadProjects(): void {
+    try {
+      if (!existsSync(this.projectsFile)) return;
+      const parsed = JSON.parse(readFileSync(this.projectsFile, "utf8")) as { projects?: Project[] };
+      this.projects = Array.isArray(parsed.projects) ? parsed.projects.map((project) => ({
+        ...project,
+        sessionFiles: Array.isArray(project.sessionFiles) ? project.sessionFiles.map((file) => resolve(file)) : [],
+        memories: Array.isArray(project.memories) ? project.memories : [],
+        documents: Array.isArray(project.documents) ? project.documents : [],
+      })) : [];
+    } catch {
+      this.projects = [];
+    }
+  }
+
+  private saveProjects(): void {
+    mkdirSync(dirname(this.projectsFile), { recursive: true });
+    writeFileSync(this.projectsFile, JSON.stringify({ projects: this.projects }, null, 2), "utf8");
+  }
+
+  private loadProjectIndex(): void {
+    try {
+      if (!existsSync(this.projectIndexFile)) return;
+      const parsed = JSON.parse(readFileSync(this.projectIndexFile, "utf8")) as Record<string, { text?: string; indexedAt?: number }>;
+      this.projectIndex = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value?.text === "string").map(([key, value]) => [key, { text: value.text ?? "", indexedAt: value.indexedAt ?? 0 }]));
+    } catch {
+      this.projectIndex = {};
+    }
+  }
+
+  private saveProjectIndex(): void {
+    mkdirSync(dirname(this.projectIndexFile), { recursive: true });
+    writeFileSync(this.projectIndexFile, JSON.stringify(this.projectIndex, null, 2), "utf8");
+  }
+
+  private extractSearchText(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) return value.map((item) => this.extractSearchText(item)).filter(Boolean).join("\n");
+    if (!value || typeof value !== "object") return "";
+    const record = value as Record<string, unknown>;
+    return [record.text, record.thinking, record.content, record.output, record.arguments].map((item) => this.extractSearchText(item)).filter(Boolean).join("\n");
+  }
+
+  private async extractDocumentText(document: ProjectDocument): Promise<string> {
+    const absolute = resolve(document.path);
+    if (!existsSync(absolute) || !statSync(absolute).isFile()) return "";
+    const size = statSync(absolute).size;
+    if (size > 8 * 1024 * 1024) return "";
+    const ext = extname(absolute).toLowerCase();
+    if ([".txt", ".md", ".markdown", ".json", ".csv", ".ts", ".tsx", ".js", ".jsx", ".css", ".html", ".htm", ".xml", ".yaml", ".yml", ".log"].includes(ext)) {
+      return readFileSync(absolute, "utf8").slice(0, 1_000_000);
+    }
+    const buffer = readFileSync(absolute);
+    const parsers = await import("./parsers.ts");
+    if (ext === ".docx") return this.extractSearchText((await parsers.parseDocx(buffer)).replace(/<[^>]+>/g, " "));
+    if (ext === ".pptx") return this.extractSearchText((await parsers.parsePptx(buffer)).replace(/<[^>]+>/g, " "));
+    if (ext === ".xlsx" || ext === ".xls") {
+      return parsers.parseXlsx(buffer).map((sheet) => `## ${sheet.name}\n${sheet.rows.map((row) => row.join("\t")).join("\n")}`).join("\n\n");
+    }
+    return "";
+  }
+
+  private async indexProjectDocument(document: ProjectDocument): Promise<void> {
+    const text = await this.extractDocumentText(document);
+    this.projectIndex[document.id] = { text, indexedAt: Date.now() };
+    document.indexedAt = this.projectIndex[document.id].indexedAt;
+    this.saveProjectIndex();
+    this.saveProjects();
+  }
+
+  private removeProjectDocumentIndex(documentId: string): void {
+    delete this.projectIndex[documentId];
+    this.saveProjectIndex();
+  }
+
+  private makeSnippet(text: string, query: string): { snippet: string; matches: number } {
+    const normalized = text.toLocaleLowerCase();
+    const needle = query.toLocaleLowerCase();
+    let matches = 0;
+    let from = 0;
+    let first = -1;
+    while (needle && (from = normalized.indexOf(needle, from)) >= 0) {
+      if (first < 0) first = from;
+      matches++;
+      from += needle.length;
+    }
+    if (first < 0) return { snippet: text.slice(0, 180).replace(/\s+/g, " "), matches: 0 };
+    const start = Math.max(0, first - 100);
+    const end = Math.min(text.length, first + query.length + 140);
+    return { snippet: `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`, matches };
+  }
+
+  async searchProject(projectId: string, query: string): Promise<ProjectSearchResult[]> {
+    const project = this.requireProject(projectId);
+    const needle = query.trim();
+    if (!needle) return [];
+    const results: ProjectSearchResult[] = [];
+    const sessions = await this.listSessions();
+    for (const file of project.sessionFiles) {
+      if (!existsSync(file)) continue;
+      let text = "";
+      try {
+        const lines = readFileSync(file, "utf8").split(/\r?\n/);
+        text = lines.map((line) => { try { return this.extractSearchText(JSON.parse(line)); } catch { return ""; } }).filter(Boolean).join("\n");
+      } catch { continue; }
+      const hit = this.makeSnippet(text, needle);
+      if (hit.matches > 0) {
+        const session = sessions.find((item) => resolve(item.file) === resolve(file));
+        results.push({ kind: "session", id: session?.id ?? file, title: session?.name || session?.firstMessage || basename(file), file, snippet: hit.snippet, matches: hit.matches });
+      }
+    }
+    for (const document of project.documents) {
+      const indexed = this.projectIndex[document.id];
+      if (!indexed) {
+        try { await this.indexProjectDocument(document); } catch { /* keep metadata searchable */ }
+      }
+      const text = this.projectIndex[document.id]?.text ?? "";
+      const hit = this.makeSnippet(text, needle);
+      if (hit.matches > 0) results.push({ kind: "document", id: document.id, documentId: document.id, title: document.name, file: document.path, snippet: hit.snippet, matches: hit.matches });
+    }
+    return results.sort((a, b) => b.matches - a.matches).slice(0, 50);
+  }
+
+  private projectSummary(project: Project): ProjectSummary {
+    return {
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      workspacePath: project.workspacePath,
+      sessionCount: project.sessionFiles.length,
+      memoryCount: project.memories.length,
+      documentCount: project.documents.length,
+      updatedAt: project.updatedAt,
+    };
+  }
+
+  private projectForSessionFile(file?: string): Project | null {
+    if (!file) return null;
+    const target = resolve(file);
+    return this.projects.find((project) => project.sessionFiles.some((item) => resolve(item) === target)) ?? null;
+  }
+
+  private requireProject(id: string): Project {
+    const project = this.projects.find((item) => item.id === id);
+    if (!project) throw new Error("Project not found");
+    return project;
+  }
+
+  listProjects(): ProjectSummary[] {
+    return this.projects.map((project) => this.projectSummary(project));
+  }
+
+  getProject(id: string): Project {
+    return structuredClone(this.requireProject(id));
+  }
+
+  createProject(input: { name: string; description?: string; workspacePath?: string; instructions?: string }): Project {
+    const name = input.name.trim();
+    if (!name) throw new Error("Project name is required");
+    if (name.length > 120) throw new Error("Project name is too long");
+    const now = Date.now();
+    const project: Project = {
+      id: randomUUID(),
+      name,
+      description: (input.description ?? "").trim(),
+      workspacePath: input.workspacePath ? resolve(input.workspacePath) : undefined,
+      instructions: (input.instructions ?? "").trim(),
+      sessionFiles: [],
+      memories: [],
+      documents: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.projects.push(project);
+    this.saveProjects();
+    return structuredClone(project);
+  }
+
+  async updateProject(id: string, patch: { name?: string; description?: string; workspacePath?: string | null; instructions?: string }): Promise<Project> {
+    const project = this.requireProject(id);
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) throw new Error("Project name is required");
+      project.name = name;
+    }
+    if (patch.description !== undefined) project.description = patch.description.trim();
+    if (patch.workspacePath !== undefined) project.workspacePath = patch.workspacePath ? resolve(patch.workspacePath) : undefined;
+    if (patch.instructions !== undefined) project.instructions = patch.instructions.trim();
+    project.updatedAt = Date.now();
+    this.saveProjects();
+    await this.reloadProjectRuntimes(project.id);
+    this.pushState();
+    return structuredClone(project);
+  }
+
+  async removeProject(id: string): Promise<void> {
+    const project = this.requireProject(id);
+    const sessionFiles = new Set(project.sessionFiles.map((file) => resolve(file)));
+    this.projects = this.projects.filter((item) => item.id !== id);
+    this.saveProjects();
+    await Promise.all([...this.runtimes.values()]
+      .filter((entry) => {
+        const sessionFile = entry.runtime.session.sessionFile;
+        return !!sessionFile && sessionFiles.has(resolve(sessionFile));
+      })
+      .map((entry) => entry.runtime.session.reload()));
+    this.pushState();
+    await this.emitSessions();
+  }
+
+  async assignSessionToProject(file: string, projectId: string | null): Promise<ProjectSummary | null> {
+    const target = resolve(file);
+    const assigned = projectId ? this.requireProject(projectId) : null;
+    const changedProjects = this.projects.filter((project) => project.sessionFiles.some((item) => resolve(item) === target));
+    for (const project of this.projects) {
+      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
+    }
+    if (assigned) {
+      assigned.sessionFiles.push(target);
+    }
+    const now = Date.now();
+    for (const project of changedProjects) project.updatedAt = now;
+    if (assigned && !changedProjects.includes(assigned)) assigned.updatedAt = now;
+    this.saveProjects();
+    const runtime = this.findRuntimeByFile(target);
+    if (runtime) await runtime.runtime.session.reload();
+    this.pushState();
+    await this.emitSessions();
+    return assigned ? this.projectSummary(assigned) : null;
+  }
+
+  async saveProjectMemory(projectId: string, input: { id?: string; content: string; type?: ProjectMemoryType; pinned?: boolean; sourceSessionId?: string }): Promise<ProjectMemory> {
+    const project = this.requireProject(projectId);
+    const content = input.content.trim();
+    if (!content) throw new Error("Memory content is required");
+    if (content.length > 16000) throw new Error("Memory is limited to 16,000 characters");
+    if (containsSensitiveMemory(content)) throw new Error("Memory appears to contain a secret or token");
+    const now = Date.now();
+    const existing = input.id ? project.memories.find((memory) => memory.id === input.id) : undefined;
+    const memory: ProjectMemory = existing ?? {
+      id: randomUUID(), projectId, content: "", type: "fact", pinned: false, createdAt: now, updatedAt: now,
+    };
+    memory.content = content;
+    memory.type = input.type ?? memory.type;
+    memory.pinned = input.pinned ?? memory.pinned;
+    memory.sourceSessionId = input.sourceSessionId ?? memory.sourceSessionId;
+    memory.updatedAt = now;
+    if (!existing) project.memories.push(memory);
+    project.updatedAt = now;
+    this.saveProjects();
+    await this.reloadProjectRuntimes(projectId);
+    this.pushState();
+    return structuredClone(memory);
+  }
+
+  async removeProjectMemory(projectId: string, memoryId: string): Promise<void> {
+    const project = this.requireProject(projectId);
+    project.memories = project.memories.filter((memory) => memory.id !== memoryId);
+    project.updatedAt = Date.now();
+    this.saveProjects();
+    await this.reloadProjectRuntimes(projectId);
+    this.pushState();
+  }
+
+  async addProjectDocument(projectId: string, input: { path: string; name?: string; summary?: string }): Promise<ProjectDocument> {
+    const project = this.requireProject(projectId);
+    const absolute = resolve(this.cwd, input.path);
+    if (!existsSync(absolute) || !statSync(absolute).isFile()) throw new Error("Document file not found");
+    const existing = project.documents.find((document) => resolve(document.path) === absolute);
+    if (existing) return structuredClone(existing);
+    const document: ProjectDocument = {
+      id: randomUUID(), projectId, name: (input.name ?? basename(absolute)).trim() || basename(absolute), path: absolute,
+      mime: MIME_BY_EXT[extname(absolute).toLowerCase()] ?? "application/octet-stream", size: statSync(absolute).size,
+      summary: (input.summary ?? "").trim(), addedAt: Date.now(),
+    };
+    project.documents.push(document);
+    project.updatedAt = Date.now();
+    await this.indexProjectDocument(document);
+    await this.reloadProjectRuntimes(projectId);
+    this.pushState();
+    return structuredClone(document);
+  }
+
+  async removeProjectDocument(projectId: string, documentId: string): Promise<void> {
+    const project = this.requireProject(projectId);
+    const removed = project.documents.find((document) => document.id === documentId);
+    project.documents = project.documents.filter((document) => document.id !== documentId);
+    if (removed) this.removeProjectDocumentIndex(removed.id);
+    project.updatedAt = Date.now();
+    this.saveProjects();
+    await this.reloadProjectRuntimes(projectId);
+    this.pushState();
+  }
+
+  private async reloadProjectRuntimes(projectId: string): Promise<void> {
+    await Promise.all([...this.runtimes.values()]
+      .filter((entry) => this.projectForSessionFile(entry.runtime.session.sessionFile)?.id === projectId)
+      .map((entry) => entry.runtime.session.reload()));
+  }
+
+  private projectSystemPrompt(sessionFile?: string): string[] {
+    const project = this.projectForSessionFile(sessionFile);
+    if (!project) return [];
+    const additions: string[] = [];
+    if (project.description || project.workspacePath) additions.push("## Project context\n<project-context>\nThis conversation belongs to the project \"" + project.name + "\".\n" + (project.description ? project.description + "\n" : "") + (project.workspacePath ? "Project workspace: " + project.workspacePath + "\n" : "") + "</project-context>\nTreat this as shared context across the project's conversations.");
+    if (project.instructions) additions.push("## Project instructions\n<project-instructions>\n" + project.instructions + "\n</project-instructions>");
+    const memories = [...project.memories].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt).slice(0, 20);
+    if (memories.length) additions.push("## Project memory\n<project-memory>\n" + memories.map((memory) => "- [" + memory.type + (memory.pinned ? ", pinned" : "") + "] " + memory.content).join("\n") + "\n</project-memory>");
+    if (project.documents.length) {
+      const references = project.documents.map((document) => "- " + document.name + ": " + document.path + (document.summary ? " (" + document.summary + ")" : ""));
+      const excerpts: string[] = [];
+      let budget = 30000;
+      for (const document of project.documents) {
+        if (budget <= 0 || !document.mime?.startsWith("text/") || (document.size ?? 0) > 200000) continue;
+        try {
+          const text = readFileSync(document.path, "utf8").slice(0, Math.min(8000, budget));
+          if (text.trim()) { excerpts.push("### " + document.name + "\n" + text); budget -= text.length; }
+        } catch { /* document may have moved; keep its reference */ }
+      }
+      additions.push("## Project documents\n<project-documents>\n" + references.join("\n") + (excerpts.length ? "\n\nSelected text excerpts:\n" + excerpts.join("\n\n") : "") + "\n</project-documents>\nUse the listed paths and workspace tools to inspect the source documents when needed.");
+    }
+    return additions;
   }
 
   // ------------------------------------------------------------- workspaces
@@ -1062,6 +1450,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       mcp: this.lastMcpStatus as unknown as AppState["mcp"],
       sessionFile: session?.sessionFile,
       sessionId: session?.sessionId,
+      project: this.projectForSessionFile(session?.sessionFile)
+        ? this.projectSummary(this.projectForSessionFile(session?.sessionFile) as Project)
+        : null,
     };
   }
 

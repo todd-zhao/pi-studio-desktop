@@ -3572,3 +3572,87 @@ body {
 }
 
 .panel-loading { display: grid; place-items: center; color: var(--muted); min-width: 280px; }
+
+
+/* Project search, document indexing, and session actions */
+.session-delete-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 12px;
+}
+
+.session-item:hover .session-delete-btn,
+.session-delete-btn.confirming {
+  opacity: 1;
+}
+
+.session-delete-btn.confirming {
+  color: var(--red);
+}
+
+.project-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.search-status {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.project-search-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.project-search-result {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px;
+  cursor: pointer;
+}
+
+.project-search-result:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.project-search-result span {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-search-result small,
+.index-status {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.message-action {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.message-action:hover {
+  color: var(--accent);
+}

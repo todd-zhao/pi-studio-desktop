@@ -54,6 +54,67 @@ export interface SessionMeta {
   createdAt?: number;
   messageCount: number;
   firstMessage?: string;
+  projectId?: string;
+  projectName?: string;
+}
+
+export type ProjectMemoryType = "decision" | "fact" | "preference" | "summary";
+
+export interface ProjectMemory {
+  id: string;
+  projectId: string;
+  content: string;
+  type: ProjectMemoryType;
+  sourceSessionId?: string;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectDocument {
+  id: string;
+  projectId: string;
+  name: string;
+  path: string;
+  mime?: string;
+  size?: number;
+  summary?: string;
+  addedAt: number;
+  indexedAt?: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  workspacePath?: string;
+  instructions: string;
+  sessionFiles: string[];
+  memories: ProjectMemory[];
+  documents: ProjectDocument[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string;
+  workspacePath?: string;
+  sessionCount: number;
+  memoryCount: number;
+  documentCount: number;
+  updatedAt: number;
+}
+
+export interface ProjectSearchResult {
+  kind: "session" | "document";
+  id: string;
+  title: string;
+  file?: string;
+  documentId?: string;
+  snippet: string;
+  matches: number;
 }
 
 export interface McpServerStatus {
@@ -118,6 +179,7 @@ export interface AppState {
   mcp?: McpStatusSnapshot | null;
   sessionFile?: string;
   sessionId?: string;
+  project?: ProjectSummary | null;
 }
 
 export type ClientWsMessage =

@@ -72,7 +72,13 @@ export function LiveToolCallCard({ tool }: { tool: { name: string; status: "runn
   );
 }
 
-export function Message({ msg }: { msg: RenderedMessage }) {
+interface MessageProps {
+  msg: RenderedMessage;
+  onSaveMemory?: (message: RenderedMessage) => void;
+  canSaveMemory?: boolean;
+}
+
+export function Message({ msg, onSaveMemory, canSaveMemory }: MessageProps) {
   if (msg.role === "user") {
     return (
       <div className="msg-user">
@@ -123,6 +129,10 @@ export function Message({ msg }: { msg: RenderedMessage }) {
         <div className="msg-body">
           <Markdown text={msg.text} />
         </div>
+      )}
+
+      {canSaveMemory && msg.text && (
+        <button className="message-action" type="button" onClick={() => onSaveMemory?.(msg)}>保存为项目记忆</button>
       )}
 
       {!msg.text && !msg.thinking && !msg.errorMessage && (msg.toolCalls?.length ?? 0) === 0 && (

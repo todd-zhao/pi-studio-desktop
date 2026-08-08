@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { AppState, SessionMeta, WorkspaceInfo } from "../types";
+import type { AppState, ProjectSummary, SessionMeta, WorkspaceInfo } from "../types";
 import type { PanelTab } from "../App";
 import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
@@ -7,6 +7,8 @@ import { FileTree } from "./FileTree";
 interface Props {
   state: AppState | null;
   sessions: SessionMeta[];
+  projects: ProjectSummary[];
+  selectedProjectId: string | null;
   workspaces: WorkspaceInfo[];
   connected: boolean;
   theme: "dark" | "light";
@@ -15,6 +17,10 @@ interface Props {
   onPanel: (tab: PanelTab | null) => void;
   onNewSession: () => void;
   onSwitchSession: (file: string) => void;
+  onDeleteSession: (file: string) => void;
+  onProjectSelect: (id: string | null) => void;
+  onManageProjects: () => void;
+  onAssignSession: (file: string, projectId: string | null) => void;
   onSwitchWorkspace: (path: string) => void;
   onAddWorkspace: (path: string) => void;
   onRefreshSessions: () => void;
@@ -62,11 +68,18 @@ function SettingsGroup({ id, title, badge, open, onToggle, children }: SettingsG
 }
 
 export function Sidebar(props: Props) {
-  const { state, sessions, workspaces, connected, activePanel, theme } = props;
+  const { state, sessions, projects, selectedProjectId, workspaces, connected, activePanel, theme } = props;
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
+  const [confirmingDeleteFile, setConfirmingDeleteFile] = useState<string | null>(null);
+
+  const visibleSessions = sessions.filter((session) => {
+    if (selectedProjectId === null) return true;
+    if (selectedProjectId === "__unassigned__") return !session.projectId;
+    return session.projectId === selectedProjectId;
+  });
 
   const current = state?.model;
   const currentKey = current ? `${current.provider}/${current.id}` : "";
@@ -98,7 +111,7 @@ export function Sidebar(props: Props) {
       <div className="sidebar-header">
         <div className="sidebar-brand-row">
           <div className="logo">
-            <div className="logo-mark logo-image"><img src="/pi-studio-logo.svg" alt="Pi Studio" /></div>
+            <div className="logo-mark logo-image"><img src="/pi-studio-logo.png" alt="Pi Studio" /></div>
             <span>Pi Studio</span>
           </div>
           <div className="sidebar-header-actions">
@@ -170,30 +183,51 @@ export function Sidebar(props: Props) {
             <button className="icon-btn browse-action-btn" title="刷新会话列表" onClick={props.onRefreshSessions}>↻</button>
           </span>
         </div>
-        <div className="side-tabs">
+      <div className="side-tabs">
           <div className={`side-tab ${sideTab === "sessions" ? "active" : ""}`} onClick={() => setSideTab("sessions")}>
             对话
           </div>
           <div className={`side-tab ${sideTab === "files" ? "active" : ""}`} onClick={() => setSideTab("files")}>
             文件
           </div>
-        </div>
-        {sideTab === "sessions" ? (
-          <div className="session-list">
-            {sessions.length === 0 && (
+      </div>
+      {sideTab === "sessions" ? (
+        <div className="session-list">
+            <div className="sel-row" style={{ padding: "4px 8px 8px" }}>
+              <select className="grow" value={selectedProjectId ?? ""} onChange={(event) => props.onProjectSelect(event.target.value || null)} title="按项目筛选会话">
+                <option value="">全部会话</option>
+                <option value="__unassigned__">未归档会话</option>
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+              <button className="icon-btn" title="管理项目" onClick={props.onManageProjects}>+</button>
+            </div>
+            {visibleSessions.length === 0 && (
               <div style={{ padding: "8px 10px", color: "var(--text-3)", fontSize: "12px" }}>
-                暂无对话
+                暂无符合条件的对话
               </div>
             )}
-            {sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <div
                 key={s.id}
                 className={`session-item ${state?.sessionFile === s.file ? "active" : ""}`}
                 onClick={() => props.onSwitchSession(s.file)}
               >
-                <div className="name">{s.name || s.firstMessage || s.file.split(/[\\/]/).pop()}</div>
+                <div className="name" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.name || s.firstMessage || s.file.split(/[\\/]/).pop()}</span>
+                  <select
+                    value={s.projectId ?? ""}
+                    title="归档到项目"
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => { event.stopPropagation(); props.onAssignSession(s.file, event.target.value || null); }}
+                    style={{ maxWidth: 24, width: 24, padding: 0, opacity: 0.75 }}
+                  >
+                    <option value="">·</option>
+                    {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                  <button className={`session-delete-btn${confirmingDeleteFile === s.file ? " confirming" : ""}`} title={confirmingDeleteFile === s.file ? "再次点击确认删除" : "删除对话"} onClick={(event) => { event.stopPropagation(); if (confirmingDeleteFile === s.file) { setConfirmingDeleteFile(null); props.onDeleteSession(s.file); } else { setConfirmingDeleteFile(s.file); window.setTimeout(() => setConfirmingDeleteFile((current) => current === s.file ? null : current), 3000); } }}>{confirmingDeleteFile === s.file ? "确认" : "×"}</button>
+                </div>
                 <div className="meta">
-                  {s.messageCount} 条消息 · {fmtTime(s.createdAt)}
+                  {s.projectName ? `${s.projectName} · ` : ""}{s.messageCount} 条消息 · {fmtTime(s.createdAt)}
                 </div>
               </div>
             ))}
@@ -207,6 +241,10 @@ export function Sidebar(props: Props) {
 
       <div className="sidebar-section">功能</div>
       <div className="feature-grid">
+        <button className={`feature-btn ${activePanel === "projects" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "projects" ? null : "projects")}>
+          <span className="feature-icon">▣</span>
+          <span>项目</span>
+        </button>
         <button className={`feature-btn ${activePanel === "team" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "team" ? null : "team")}>
           <span className="feature-icon">◎</span>
           <span>团队任务</span>

@@ -232,11 +232,8 @@ function createWindow() {
     callback(clipboardWritePermissions.has(permission) && isTrustedRendererUrl(requestingUrl));
   });
 
-  const svgPath = path.join(__dirname, "assets", "logo.svg");
   const pngPath = path.join(__dirname, "assets", "pi-studio-logo.png");
-  const startupAsset = fs.existsSync(svgPath)
-    ? { mime: "image/svg+xml", path: svgPath }
-    : { mime: "image/png", path: pngPath };
+  const startupAsset = { mime: "image/png", path: pngPath };
   const startupIcon = `data:${startupAsset.mime};base64,${fs.readFileSync(startupAsset.path).toString("base64")}`;
   mainWindow.loadURL(
     "data:text/html;charset=utf-8," +

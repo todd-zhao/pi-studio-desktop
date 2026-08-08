@@ -649,6 +649,133 @@ app.post("/api/agents/active", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------- projects
+
+app.get("/api/projects", (_req, res) => {
+  res.json(bridge.listProjects());
+});
+
+app.post("/api/projects", (req, res) => {
+  try {
+    const project = bridge.createProject({
+      name: String(req.body?.name ?? ""),
+      description: req.body?.description === undefined ? undefined : String(req.body.description),
+      workspacePath: req.body?.workspacePath ? String(req.body.workspacePath) : undefined,
+      instructions: req.body?.instructions === undefined ? undefined : String(req.body.instructions),
+    });
+    res.json(project);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.get("/api/projects/:id", (req, res) => {
+  try {
+    res.json(bridge.getProject(decodeURIComponent(req.params.id)));
+  } catch (e) {
+    res.status(404).json({ error: (e as Error).message });
+  }
+});
+
+app.patch("/api/projects/:id", async (req, res) => {
+  try {
+    const project = await bridge.updateProject(decodeURIComponent(req.params.id), {
+      name: req.body?.name === undefined ? undefined : String(req.body.name),
+      description: req.body?.description === undefined ? undefined : String(req.body.description),
+      workspacePath: req.body?.workspacePath === undefined ? undefined : (req.body.workspacePath ? String(req.body.workspacePath) : null),
+      instructions: req.body?.instructions === undefined ? undefined : String(req.body.instructions),
+    });
+    res.json(project);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.delete("/api/projects/:id", async (req, res) => {
+  try {
+    await bridge.removeProject(decodeURIComponent(req.params.id));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/projects/:id/sessions", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    res.json(await bridge.assignSessionToProject(file, decodeURIComponent(req.params.id)));
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.delete("/api/projects/:id/sessions", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    await bridge.assignSessionToProject(file, null);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/projects/:id/memories", async (req, res) => {
+  try {
+    const memory = await bridge.saveProjectMemory(decodeURIComponent(req.params.id), {
+      id: req.body?.id ? String(req.body.id) : undefined,
+      content: String(req.body?.content ?? ""),
+      type: req.body?.type,
+      pinned: req.body?.pinned === undefined ? undefined : !!req.body.pinned,
+      sourceSessionId: req.body?.sourceSessionId ? String(req.body.sourceSessionId) : undefined,
+    });
+    res.json(memory);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.delete("/api/projects/:id/memories/:memoryId", async (req, res) => {
+  try {
+    await bridge.removeProjectMemory(decodeURIComponent(req.params.id), decodeURIComponent(req.params.memoryId));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.get("/api/projects/:id/search", async (req, res) => {
+  try {
+    const query = String(req.query.q ?? "");
+    res.json(await bridge.searchProject(decodeURIComponent(req.params.id), query));
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/projects/:id/documents", async (req, res) => {
+  try {
+    const document = await bridge.addProjectDocument(decodeURIComponent(req.params.id), {
+      path: String(req.body?.path ?? ""),
+      name: req.body?.name ? String(req.body.name) : undefined,
+      summary: req.body?.summary ? String(req.body.summary) : undefined,
+    });
+    res.json(document);
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.delete("/api/projects/:id/documents/:documentId", async (req, res) => {
+  try {
+    await bridge.removeProjectDocument(decodeURIComponent(req.params.id), decodeURIComponent(req.params.documentId));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 // ------------------------------------------------------------------ misc API
 
 app.get("/api/state", (_req, res) => {
@@ -657,6 +784,16 @@ app.get("/api/state", (_req, res) => {
 
 app.get("/api/sessions", async (_req, res) => {
   res.json(await bridge.listSessions());
+});
+
+app.delete("/api/sessions", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    res.json({ ok: true, ...(await bridge.deleteSession(file)) });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
 });
 
 // ------------------------------------------------------------ static client

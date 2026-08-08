@@ -15,9 +15,11 @@ interface Props {
   live: LiveState;
   queued: { steering: number; followUp: number } | null;
   isStreaming: boolean;
+  onSaveMemory?: (message: RenderedMessage) => void;
+  canSaveMemory?: boolean;
 }
 
-export function Chat({ messages, live, queued, isStreaming }: Props) {
+export function Chat({ messages, live, queued, isStreaming, onSaveMemory, canSaveMemory }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [stickBottom, setStickBottom] = useState(true);
   const showEmpty = messages.length === 0 && !isStreaming && !live.liveText;
@@ -44,7 +46,7 @@ export function Chat({ messages, live, queued, isStreaming }: Props) {
         )}
 
         {messages.map((m) => (
-          <Message key={m.id} msg={m} />
+          <Message key={m.id} msg={m} onSaveMemory={onSaveMemory} canSaveMemory={canSaveMemory} />
         ))}
 
         {queued && (queued.steering > 0 || queued.followUp > 0) && (

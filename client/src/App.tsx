@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { PiSocket, getGoals, getSubagents, listAgents, listSessions, retryBoot, setActiveAgent, setGoals, setSubagents } from "./api";
-import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
+import { PiSocket, assignSessionToProject, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listProjects, listSessions, removeSessionFromProject, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
+import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
@@ -11,6 +11,7 @@ const AgentsPanel = lazy(() => import("./components/AgentsPanel").then((module) 
 const TeamPanel = lazy(() => import("./components/TeamPanel").then((module) => ({ default: module.TeamPanel })));
 const SchedulesPanel = lazy(() => import("./components/SchedulesPanel").then((module) => ({ default: module.SchedulesPanel })));
 const WechatPanel = lazy(() => import("./components/WechatPanel").then((module) => ({ default: module.WechatPanel })));
+const ProjectsPanel = lazy(() => import("./components/ProjectsPanel").then((module) => ({ default: module.ProjectsPanel })));
 const FilePreview = lazy(() => import("./components/FilePreview").then((module) => ({ default: module.FilePreview })));
 
 export interface LiveTool {
@@ -57,11 +58,13 @@ export interface RenderedMessage extends ClientMessage {
   toolResults?: Record<string, { text: string; isError: boolean }>;
 }
 
-export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat";
+export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat" | "projects";
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [panel, setPanel] = useState<PanelTab | null>(null);
@@ -284,6 +287,7 @@ export default function App() {
           applyState(msg.state);
           if (msg.sessions) setSessions(msg.sessions);
           if (msg.workspaces) setWorkspaces(msg.workspaces);
+          void listProjects().then(setProjects).catch(() => {});
           void Promise.all([
             getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {}),
             getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {}),
@@ -376,6 +380,34 @@ export default function App() {
     }
   }, []);
 
+  const handleDeleteSession = useCallback(async (file: string) => {
+    try {
+      const result = await deleteSessionApi(file);
+      await refreshSessions();
+      setProjects(await listProjects());
+      if (result.activeFile && result.activeFile !== state?.sessionFile) {
+        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
+      }
+      toast("ok", "对话已删除");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [refreshSessions, state?.sessionFile, toast]);
+
+  const assignSession = useCallback(async (file: string, projectId: string | null) => {
+    try {
+      if (projectId) await assignSessionToProject(projectId, file);
+      else {
+        const current = sessions.find((session) => session.file === file);
+        if (current?.projectId) await removeSessionFromProject(current.projectId, file);
+      }
+      setSessions(await listSessions());
+      setProjects(await listProjects());
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [sessions, toast]);
+
   const send = useCallback(
     async (text: string, attachments?: AttachmentInfo[], refs?: string[]) => {
       const one = oneShotRef.current;
@@ -401,6 +433,30 @@ export default function App() {
     },
     [toast],
   );
+
+  const saveMessageAsMemory = useCallback(async (message: RenderedMessage) => {
+    const projectId = state?.project?.id;
+    if (!projectId) {
+      toast("warn", "请先将当前会话加入项目");
+      return;
+    }
+    const content = message.text.trim();
+    if (!content) {
+      toast("warn", "当前消息没有可保存的文本");
+      return;
+    }
+    try {
+      await saveProjectMemory(projectId, {
+        content,
+        type: "summary",
+        pinned: false,
+        sourceSessionId: state?.sessionId,
+      });
+      toast("ok", "消息已保存为项目记忆");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [state?.project?.id, state?.sessionId, toast]);
 
   const steer = useCallback((text: string) => {
     if (!text.trim()) return;
@@ -449,6 +505,8 @@ export default function App() {
         live={{ liveText, liveThinking, liveTools }}
         queued={queued}
         isStreaming={state?.isStreaming ?? false}
+        onSaveMemory={saveMessageAsMemory}
+        canSaveMemory={Boolean(state?.project?.id)}
       />
       <Composer
         ref={composerRef}
@@ -495,6 +553,8 @@ export default function App() {
         <Sidebar
           state={state}
           sessions={sessions}
+          projects={projects}
+          selectedProjectId={selectedProjectId}
           workspaces={workspaces}
           connected={connected}
           theme={theme}
@@ -503,6 +563,10 @@ export default function App() {
           onPanel={setPanel}
           onNewSession={newSession}
           onSwitchSession={switchSession}
+          onDeleteSession={handleDeleteSession}
+          onProjectSelect={setSelectedProjectId}
+          onManageProjects={() => setPanel("projects")}
+          onAssignSession={(file, projectId) => void assignSession(file, projectId)}
           onSwitchWorkspace={switchWorkspace}
           onAddWorkspace={addWorkspace}
           onPickFile={handlePickFile}
@@ -587,6 +651,20 @@ export default function App() {
       {panel === "wechat" && (
         <div className="right-panel wechat-right-panel">
           <WechatPanel status={wechatStatus} qr={wechatQr} logs={wechatLogs} onCommand={sendWechatCommand} onClose={() => setPanel(null)} />
+        </div>
+      )}
+      {panel === "projects" && (
+        <div className="right-panel">
+          <ProjectsPanel
+            projects={projects}
+            currentSessionFile={state?.sessionFile}
+            currentProjectId={state?.project?.id ?? null}
+            onProjectsChange={setProjects}
+            onStateRefresh={() => void refreshSessions()}
+            onSessionSelect={switchSession}
+            onClose={() => setPanel(null)}
+            onToast={toast}
+          />
         </div>
       )}
       {preview && (
