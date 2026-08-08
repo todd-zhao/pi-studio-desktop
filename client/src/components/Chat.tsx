@@ -62,9 +62,25 @@ export function Chat({ messages, live, queued, isStreaming, onSaveMemory, canSav
               <span>Pi</span>
               <span className="badge">思考中…</span>
             </div>
-            {live.liveTools.map((t) => (
-              <LiveToolCallCard key={t.key} tool={t} />
-            ))}
+            {live.liveTools.length > 0 && (
+              <details className="tool-calls-group">
+                <summary>
+                  <span className="tool-calls-title">{"\u5de5\u5177\u8c03\u7528"}</span>
+                  <span className="tool-calls-count">{live.liveTools.length}</span>
+                  {live.liveTools.some((tool) => tool.status === "running") && (
+                    <span className="tool-calls-state">{"\u8fd0\u884c\u4e2d"}</span>
+                  )}
+                  {live.liveTools.some((tool) => tool.status === "error") && (
+                    <span className="tool-calls-state error">{"\u6709\u5931\u8d25"}</span>
+                  )}
+                </summary>
+                <div className="tool-calls-list">
+                  {live.liveTools.map((tool) => (
+                    <LiveToolCallCard key={tool.key} tool={tool} />
+                  ))}
+                </div>
+              </details>
+            )}
             {live.liveThinking && (
               <div className="thinking">
                 <details>

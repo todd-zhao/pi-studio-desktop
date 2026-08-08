@@ -71,6 +71,36 @@ export function LiveToolCallCard({ tool }: { tool: { name: string; status: "runn
     </div>
   );
 }
+function ToolCallGroup({
+  calls,
+  results,
+}: {
+  calls: ToolCallInfo[];
+  results?: Record<string, { text: string; isError: boolean }>;
+}) {
+  const running = calls.filter((call) => !results?.[call.id]).length;
+  const failed = calls.filter((call) => results?.[call.id]?.isError).length;
+
+  return (
+    <details className="tool-calls-group">
+      <summary>
+        <span className="tool-calls-title">{"\u5de5\u5177\u8c03\u7528"}</span>
+        <span className="tool-calls-count">{calls.length}</span>
+        {running > 0 && <span className="tool-calls-state">{"\u8fd0\u884c\u4e2d"}</span>}
+        {failed > 0 && (
+          <span className="tool-calls-state error">
+            {failed} {"\u5931\u8d25"}
+          </span>
+        )}
+      </summary>
+      <div className="tool-calls-list">
+        {calls.map((call) => (
+          <ToolCallCard key={call.id} call={call} result={results?.[call.id]} />
+        ))}
+      </div>
+    </details>
+  );
+}
 
 interface MessageProps {
   msg: RenderedMessage;
@@ -121,9 +151,9 @@ export function Message({ msg, onSaveMemory, canSaveMemory }: MessageProps) {
 
       {msg.errorMessage && <div className="msg-error">⚠ {msg.errorMessage}</div>}
 
-      {(msg.toolCalls ?? []).map((c) => (
-        <ToolCallCard key={c.id} call={c} result={msg.toolResults?.[c.id]} />
-      ))}
+      {msg.toolCalls && msg.toolCalls.length > 0 && (
+        <ToolCallGroup calls={msg.toolCalls} results={msg.toolResults} />
+      )}
 
       {msg.text && (
         <div className="msg-body">

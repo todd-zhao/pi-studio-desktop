@@ -515,9 +515,16 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             {uploading ? <span className="spinner" /> : "📎"}
           </button>
           {isStreaming ? (
+            <>
+              {canSend && (
+                <button className="send-btn" title="Send follow-up" aria-label="Send follow-up" onClick={send}>
+                  {"\u2192"}
+                </button>
+              )}
             <button className="stop-btn" title="停止" onClick={onAbort}>
               ■
             </button>
+            </>
           ) : (
             <button className="send-btn" title="发送" disabled={!canSend} onClick={send}>
               ↑

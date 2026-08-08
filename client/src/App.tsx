@@ -232,6 +232,11 @@ export default function App() {
           else if (a?.type === "thinking_delta") next.thinking += a.delta ?? "";
           break;
         }
+        case "message_end":
+          next.text = "";
+          next.thinking = "";
+          next.tools = [];
+          break;
         case "tool_execution_start": {
           next.tools.push({
             key: e.toolCallId ?? (Date.now() + "-" + Math.random().toString(36).slice(2, 6)),

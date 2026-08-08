@@ -347,6 +347,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           : { type: "runtime_event", value: event, sessionId, sessionFile };
         this.emit("event", routedEvent);
         switch ((event as { type?: string }).type) {
+          case "agent_start":
+          case "queue_update":
           case "agent_end":
           case "agent_settled":
           case "message_end":
@@ -442,6 +444,13 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   async prompt(text: string, attachments?: AttachmentInfo[], refs?: string[]): Promise<void> {
     const entry = this.activeEntry();
+    // A prompt submitted while the agent is running is a follow-up message.
+    // Send it directly so it can enter the SDK queue immediately instead of
+    // waiting behind the outer prompt lock until the current run completes.
+    if (entry.runtime.session.isStreaming) {
+      await this.runPrompt(entry, text, attachments, refs);
+      return;
+    }
     await this.withPromptLock(entry, () => this.runPrompt(entry, text, attachments, refs));
   }
 
