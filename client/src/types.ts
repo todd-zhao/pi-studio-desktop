@@ -121,7 +121,7 @@ export interface AppState {
 }
 
 export type ClientWsMessage =
-  | { type: "prompt"; text: string; attachments?: AttachmentInfo[] }
+  | { type: "prompt"; text: string; attachments?: AttachmentInfo[]; refs?: string[] }
   | { type: "steer"; text: string }
   | { type: "followUp"; text: string }
   | { type: "abort" }

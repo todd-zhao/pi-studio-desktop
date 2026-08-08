@@ -192,7 +192,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: "Pi Studio",
-    icon: path.join(__dirname, "assets", "pi-studio-logo.png"),
+    icon: path.join(__dirname, "assets", "icon.png"),
     backgroundColor: "#171717",
     autoHideMenuBar: true,
     webPreferences: {
@@ -232,7 +232,7 @@ function createWindow() {
     callback(clipboardWritePermissions.has(permission) && isTrustedRendererUrl(requestingUrl));
   });
 
-  const svgPath = path.join(__dirname, "assets", "pi-studio-logo.svg");
+  const svgPath = path.join(__dirname, "assets", "logo.svg");
   const pngPath = path.join(__dirname, "assets", "pi-studio-logo.png");
   const startupAsset = fs.existsSync(svgPath)
     ? { mime: "image/svg+xml", path: svgPath }

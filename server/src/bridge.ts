@@ -118,6 +118,12 @@ const PI_VERSION: string = (() => {
   return "";
 })();
 
+interface RuntimeEntry {
+  id: string;
+  runtime: AgentSessionRuntime;
+  disposeFns: Array<() => void>;
+}
+
 interface BridgeEvents {
   state: [AppState];
   event: [unknown];
@@ -141,11 +147,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   private modelRuntime!: ModelRuntime;
   private settingsManager!: SettingsManager;
-  private runtime!: AgentSessionRuntime;
+  private readonly runtimes = new Map<string, RuntimeEntry>();
+  private readonly promptQueues = new Map<string, Promise<void>>();
+  private activeRuntimeId = "";
   private eventBus!: ReturnType<typeof createEventBus>;
   private availableModels: ModelInfo[] = [];
   private lastMcpStatus: McpStatusSnapshot | null = null;
-  private disposeFns: Array<() => void> = [];
   private started = false;
   private workspacesFile: string;
   private customWorkspaces: string[] = [];
@@ -269,63 +276,114 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     };
   }
 
-  private async createRuntime(): Promise<void> {
-    startupLog("session-manager-create-start");
-    const sessionManager = SessionManager.create(this.cwd);
-    startupLog("session-manager-create-done");
+  private activeEntry(): RuntimeEntry {
+    const entry = this.runtimes.get(this.activeRuntimeId);
+    if (!entry) throw new Error("Active session runtime is not ready");
+    return entry;
+  }
+
+  private async createRuntimeForManager(sessionManager: SessionManager): Promise<RuntimeEntry> {
     startupLog("create-agent-session-runtime-start");
-    this.runtime = await createAgentSessionRuntime(this.makeFactory(), {
-      cwd: this.cwd,
+    const runtime = await createAgentSessionRuntime(this.makeFactory(), {
+      cwd: sessionManager.getCwd() || this.cwd,
       agentDir: this.agentDir,
       sessionManager,
     });
     startupLog("create-agent-session-runtime-done");
 
-    for (const d of this.runtime.diagnostics ?? []) {
+    const entry: RuntimeEntry = {
+      id: runtime.session.sessionId,
+      runtime,
+      disposeFns: [],
+    };
+    for (const d of runtime.diagnostics ?? []) {
       this.emit("log", d.type === "error" ? "error" : d.type === "warning" ? "warn" : "info", d.message);
     }
-
-    startupLog("bind-session-start");
-    await this.bindSession();
-    startupLog("bind-session-done");
+    startupLog("bind-session-start", entry.id);
+    await this.bindRuntime(entry);
+    startupLog("bind-session-done", entry.id);
+    return entry;
   }
 
-  private async bindSession(): Promise<void> {
-    const session = this.runtime.session;
-    // Provide a binding so `session.reload()` emits `session_start(reason:"reload")`
-    // to extensions. Without any binding, headless reload shuts extensions down
-    // but never re-initializes them (pi-mcp-adapter loses its server state).
+  private async createRuntime(): Promise<void> {
+    startupLog("session-manager-create-start");
+    const sessionManager = SessionManager.create(this.cwd);
+    startupLog("session-manager-create-done");
+    const entry = await this.createRuntimeForManager(sessionManager);
+    this.runtimes.set(entry.id, entry);
+    this.activeRuntimeId = entry.id;
+  }
+
+  private async bindRuntime(entry: RuntimeEntry): Promise<void> {
+    const session = entry.runtime.session;
+    // Provide a binding so session.reload() re-initializes extensions.
     await session.bindExtensions({ shutdownHandler: () => {} });
-    for (const fn of this.disposeFns) fn();
-    this.disposeFns = [];
-    this.disposeFns.push(
+    for (const fn of entry.disposeFns) fn();
+    entry.disposeFns = [];
+    entry.disposeFns.push(
       session.subscribe((event) => {
-        this.emit("event", event);
-        switch (event.type) {
+        const sessionId = entry.runtime.session.sessionId;
+        const sessionFile = entry.runtime.session.sessionFile;
+        const routedEvent = event && typeof event === "object"
+          ? { ...(event as Record<string, unknown>), sessionId, sessionFile }
+          : { type: "runtime_event", value: event, sessionId, sessionFile };
+        this.emit("event", routedEvent);
+        switch ((event as { type?: string }).type) {
           case "agent_end":
           case "agent_settled":
           case "message_end":
           case "compaction_end":
           case "auto_retry_end":
           case "summarization_retry_finished":
-            this.pushState();
+            if (entry.id === this.activeRuntimeId) this.pushState();
             break;
         }
       }),
     );
   }
 
+  private findRuntimeByFile(file: string): RuntimeEntry | undefined {
+    const target = resolve(file);
+    return [...this.runtimes.values()].find((entry) => {
+      const sessionFile = entry.runtime.session.sessionFile;
+      return !!sessionFile && resolve(sessionFile) === target;
+    });
+  }
+
   async dispose(): Promise<void> {
-    for (const fn of this.disposeFns) fn();
-    this.disposeFns = [];
-    try {
-      await this.runtime?.dispose();
-    } catch {
-      /* ignore */
-    }
+    const entries = [...this.runtimes.values()];
+    this.runtimes.clear();
+    this.activeRuntimeId = "";
+    await Promise.all(entries.map(async (entry) => {
+      for (const fn of entry.disposeFns) fn();
+      entry.disposeFns = [];
+      try {
+        await entry.runtime.dispose();
+      } catch {
+        /* ignore */
+      }
+    }));
   }
 
   // ------------------------------------------------------------------ actions
+
+  private async withPromptLock<T>(entry: RuntimeEntry, action: () => Promise<T>): Promise<T> {
+    const previous = (this.promptQueues.get(entry.id) ?? Promise.resolve()).catch(() => undefined);
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => current);
+    this.promptQueues.set(entry.id, queued);
+
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.promptQueues.get(entry.id) === queued) this.promptQueues.delete(entry.id);
+    }
+  }
 
   async prompt(text: string, attachments?: AttachmentInfo[], refs?: string[]): Promise<void> {
     const images = (attachments ?? [])
@@ -347,36 +405,49 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       promptText += `\n\n[用户上传了 ${files.length} 个附件]\n${notes}\n\n附件已保存到工作区，可通过 read / grep / bash 等工具读取；其中的图片已作为图像内容提供给你。`;
     }
 
-    const session = this.runtime.session;
-    if (session.isStreaming) {
-      await session.followUp(promptText, images.length ? images : undefined);
-    } else {
-      await session.prompt(promptText, images.length ? { images } : undefined);
-    }
+    const entry = this.activeEntry();
+    await this.withPromptLock(entry, async () => {
+      const session = entry.runtime.session;
+      if (session.isStreaming) {
+        await session.followUp(promptText, images.length ? images : undefined);
+      } else {
+        await session.prompt(promptText, images.length ? { images } : undefined);
+      }
+    });
   }
 
   async steer(text: string): Promise<void> {
-    await this.runtime.session.steer(text);
+    await this.activeEntry().runtime.session.steer(text);
   }
 
   async followUp(text: string): Promise<void> {
-    await this.runtime.session.followUp(text);
+    await this.activeEntry().runtime.session.followUp(text);
   }
 
   async abort(): Promise<void> {
-    await this.runtime.session.abort();
+    await this.activeEntry().runtime.session.abort();
   }
 
   async newSession(): Promise<void> {
-    await this.runtime.newSession();
-    await this.bindSession();
+    const active = this.activeEntry();
+    const sessionDir = active.runtime.session.sessionManager.getSessionDir();
+    const entry = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
+    this.runtimes.set(entry.id, entry);
+    this.activeRuntimeId = entry.id;
     this.pushState();
     await this.emitSessions();
   }
 
   async switchSession(file: string): Promise<void> {
-    await this.runtime.switchSession(file);
-    await this.bindSession();
+    const existing = this.findRuntimeByFile(file);
+    if (existing) {
+      this.activeRuntimeId = existing.id;
+    } else {
+      const sessionManager = SessionManager.open(resolve(file), undefined, this.cwd);
+      const entry = await this.createRuntimeForManager(sessionManager);
+      this.runtimes.set(entry.id, entry);
+      this.activeRuntimeId = entry.id;
+    }
     this.pushState();
     await this.emitSessions();
   }
@@ -404,23 +475,23 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   async setModel(provider: string, id: string): Promise<void> {
     const model = this.modelRuntime.getModel(provider, id);
     if (!model) throw new Error(`Model not found: ${provider}/${id}`);
-    await this.runtime.session.setModel(model);
+    await this.activeEntry().runtime.session.setModel(model);
     this.pushState();
   }
 
   async setThinking(level: string): Promise<void> {
-    this.runtime.session.setThinkingLevel(level as ThinkingLevel);
+    this.activeEntry().runtime.session.setThinkingLevel(level as ThinkingLevel);
     this.pushState();
   }
 
   /** Run an extension command such as /mcp reconnect <server>. */
   async runMcpCommand(command: string): Promise<void> {
-    await this.runtime.session.prompt(command);
+    await this.activeEntry().runtime.session.prompt(command);
   }
 
   /** Reload extensions/skills/prompts/settings — used after MCP config changes. */
   async reload(): Promise<void> {
-    await this.runtime.session.reload();
+    await this.activeEntry().runtime.session.reload();
     this.pushState();
   }
 
@@ -433,8 +504,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (enabled === this.subagentsEnabled) return;
     this.subagentsEnabled = enabled;
     writeFileSync(join(this.agentDir, "subagents.json"), JSON.stringify({ enabled }, null, 2));
-    await this.runtime.session.reload();
-    await this.bindSession();
+    await this.activeEntry().runtime.session.reload();
+    await this.bindRuntime(this.activeEntry());
     this.pushState();
   }
   getGoalSettings(): { enabled: boolean; goal: string } { return { enabled: this.goalsEnabled, goal: this.goalText }; }
@@ -444,8 +515,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.goalsEnabled = enabled;
     this.goalText = nextGoal;
     writeFileSync(join(this.agentDir, "goals.json"), JSON.stringify({ enabled, goal: this.goalText }, null, 2));
-    await this.runtime.session.reload();
-    await this.bindSession();
+    await this.activeEntry().runtime.session.reload();
+    await this.bindRuntime(this.activeEntry());
     this.pushState();
   }
 
@@ -511,7 +582,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       const index = this.agents.findIndex((item) => item.id === "default");
       this.agents[index] = { ...this.defaultAgent(), memory };
       this.writeAgents();
-      if (this.started) await this.runtime.session.reload();
+      if (this.started) await this.activeEntry().runtime.session.reload();
       this.pushState();
       return { ...this.agents[index] };
     }
@@ -520,7 +591,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (index >= 0) this.agents[index] = { ...this.agents[index], ...next };
     else this.agents.push(next);
     this.writeAgents();
-    if (id === this.activeAgentId && this.started) await this.runtime.session.reload();
+    if (id === this.activeAgentId && this.started) await this.activeEntry().runtime.session.reload();
     this.pushState();
     return { ...(this.agents.find((item) => item.id === id) as AgentProfile) };
   }
@@ -532,7 +603,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (this.agents.length === before) throw new Error("Agent 不存在");
     if (this.activeAgentId === id) this.activeAgentId = "default";
     this.writeAgents();
-    if (this.started) await this.runtime.session.reload();
+    if (this.started) await this.activeEntry().runtime.session.reload();
     this.pushState();
   }
 
@@ -540,7 +611,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (!this.agents.some((agent) => agent.id === id)) throw new Error("Agent 不存在");
     this.activeAgentId = id;
     this.writeAgents();
-    if (this.started) await this.runtime.session.reload();
+    if (this.started) await this.activeEntry().runtime.session.reload();
     this.pushState();
   }
 
@@ -629,13 +700,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       return;
     }
 
-    for (const fn of this.disposeFns) fn();
-    this.disposeFns = [];
-    try {
-      await this.runtime?.dispose();
-    } catch {
-      /* ignore */
-    }
+    await this.dispose();
 
     this.cwd = abs;
     if (!this.customWorkspaces.includes(abs)) this.customWorkspaces.push(abs);
@@ -787,17 +852,17 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
         return `已切换到 ${provider}/${id}${level ? ` (思考: ${level})` : ""}`;
       }
       case "/compact":
-        await this.runtime.session.compact();
+        await this.activeEntry().runtime.session.compact();
         return "已压缩上下文";
       case "/mcp":
       case "/mcp-auth": {
-        await this.runtime.session.prompt(command);
+        await this.activeEntry().runtime.session.prompt(command);
         return `已执行 ${command}`;
       }
       default: {
         if (name.startsWith("/")) {
           // pass through as an extension command
-          await this.runtime.session.prompt(command);
+          await this.activeEntry().runtime.session.prompt(command);
           return `已执行 ${command}`;
         }
         throw new Error(`未知命令: ${name}`);
@@ -808,7 +873,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   async runWechatCommand(action: WechatCommandAction): Promise<void> {
     const command = action === "reconnect" ? "/wechat reconnect"
       : action === "disconnect" ? "/wechat disconnect" : "/wechat";
-    await this.runtime.session.prompt(command);
+    await this.activeEntry().runtime.session.prompt(command);
   }
 
   static commandList(): CommandInfo[] {
@@ -976,7 +1041,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   // ------------------------------------------------------------------ state
 
   getState(): AppState {
-    const session = this.runtime?.session;
+    const session = this.runtimes.get(this.activeRuntimeId)?.runtime.session;
     const model = session?.model;
     return {
       messages: serializeMessages(session?.messages ?? []),

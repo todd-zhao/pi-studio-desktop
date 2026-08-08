@@ -25,7 +25,7 @@ electronLanguages:
   - en-US
   - zh-CN
 win:
-  icon: desktop/assets/pi-studio-logo.ico
+  icon: desktop/assets/icon.ico
   target:
     - target: dir
       arch:

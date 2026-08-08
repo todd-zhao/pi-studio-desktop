@@ -45,6 +45,33 @@ export function ToolCallCard({ call, result }: { call: ToolCallInfo; result?: { 
   );
 }
 
+export function LiveToolCallCard({ tool }: { tool: { name: string; status: "running" | "done" | "error"; args?: string; output?: string } }) {
+  const [open, setOpen] = useState(false);
+  const done = tool.status !== "running";
+  const err = tool.status === "error";
+
+  return (
+    <div
+      className={`tool-call ${tool.status === "running" ? "running" : err ? "error" : ""}`}
+      onClick={() => setOpen((value) => !value)}
+      title="点击展开/收起工具详情"
+    >
+      <div className="tool-call-head">
+        <span>{open ? "▾" : "▸"}</span>
+        <span className="tname">{tool.name}</span>
+        {!done && <span className="spinner" />}
+        <span className="tstate">{tool.status === "running" ? "运行中" : err ? "失败" : "完成"}</span>
+      </div>
+      {open && (
+        <div className="tool-call-body">
+          {tool.args && <pre className="args">{tool.args}</pre>}
+          {tool.output && <pre className={err ? "err" : ""}>{tool.output}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Message({ msg }: { msg: RenderedMessage }) {
   if (msg.role === "user") {
     return (

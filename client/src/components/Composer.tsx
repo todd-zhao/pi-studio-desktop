@@ -15,6 +15,7 @@ interface Props {
   onSetModel: (provider: string, id: string) => void;
   onSetAgent: (id: string) => void;
   onSend: (text: string, attachments?: AttachmentInfo[], refs?: string[]) => void;
+  onSteer: (text: string) => void;
   onAbort: () => void;
   onError: (message: string) => void;
   oneShot: { subagents: boolean; goals: boolean };
@@ -67,7 +68,7 @@ function extractRefs(text: string): string[] {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { isStreaming, model, models, agents, activeAgentId, onSetModel, onSetAgent, onSend, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
+  { isStreaming, model, models, agents, activeAgentId, onSetModel, onSetAgent, onSend, onSteer, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
   ref,
 ) {
   const visibleModelName = model?.displayName && !/^unknown(?:[/]unknown)?$/i.test(model.displayName) ? model.displayName : "";
@@ -243,6 +244,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const comp = completionRef.current;
+    const direct = e.ctrlKey || e.metaKey;
+    if (e.key === "Enter" && direct && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      setCompletion(null);
+      if (isStreaming && textRef.current.trim()) {
+        steer();
+      } else {
+        send();
+      }
+      return;
+    }
     if (comp && comp.items.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -295,6 +307,18 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onSend(t, attachments, refs);
     setText("");
     setAttachments([]);
+    setCompletion(null);
+    setTaskModeOpen(false);
+    setModelOpen(false);
+    setAgentOpen(false);
+    if (taRef.current) taRef.current.style.height = "auto";
+  };
+
+  const steer = () => {
+    const t = text.trim();
+    if (!t) return;
+    onSteer(t);
+    setText("");
     setCompletion(null);
     setTaskModeOpen(false);
     setModelOpen(false);
@@ -479,7 +503,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                   <textarea
                     className="task-mode-goal"
                     value={goalText}
-                    placeholder="设定长时目标，例如：完成登录重构并通过完整测试"
+                    placeholder={"\u8865\u5145\u7ea6\u675f/\u9a8c\u6536\u6807\u51c6\uFF08\u9009\u586B\uFF09"}
                     onChange={(e) => onGoalTextChange(e.target.value)}
                     onBlur={(e) => onSaveGoalText(e.currentTarget.value)}
                   />

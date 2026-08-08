@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ClientMessage } from "../types";
-import { Message } from "./Message";
+import { LiveToolCallCard, Message } from "./Message";
 import { Markdown } from "./markdown";
 import type { RenderedMessage } from "../App";
 
@@ -61,14 +61,7 @@ export function Chat({ messages, live, queued, isStreaming }: Props) {
               <span className="badge">思考中…</span>
             </div>
             {live.liveTools.map((t) => (
-              <div key={t.key} className={`tool-call running`}>
-                <div className="tool-call-head">
-                  <span>▸</span>
-                  <span className="tname">{t.name}</span>
-                  <span className="spinner" />
-                  <span className="tstate">运行中</span>
-                </div>
-              </div>
+              <LiveToolCallCard key={t.key} tool={t} />
             ))}
             {live.liveThinking && (
               <div className="thinking">

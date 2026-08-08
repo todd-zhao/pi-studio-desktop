@@ -21,6 +21,32 @@ export interface LiveTool {
   output?: string;
 }
 
+export interface LiveSnapshot {
+  text: string;
+  thinking: string;
+  tools: LiveTool[];
+  queued: { steering: number; followUp: number } | null;
+}
+
+function emptyLiveSnapshot(): LiveSnapshot {
+  return { text: "", thinking: "", tools: [], queued: null };
+}
+
+function sessionKey(sessionId?: string): string {
+  return sessionId ? "id:" + sessionId : "unknown";
+}
+
+function buildOneShotGoal(mainText: string, supplementalText: string): string {
+  const main = mainText.trim() || "\u6839\u636e\u672c\u6b21\u5bf9\u8bdd\u5185\u5bb9\u5b8c\u6210\u4efb\u52a1";
+  const supplemental = supplementalText.trim();
+  return [
+    `\u672c\u6b21\u957f\u65f6\u4efb\u52a1\uFF1A\n${main}`,
+    supplemental ? `\u8865\u5145\u7ea6\u675f/\u9a8c\u6536\u6807\u51c6\uFF1A\n${supplemental}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export interface Toast {
   id: number;
   level: "info" | "warn" | "error" | "ok";
@@ -75,8 +101,12 @@ export default function App() {
   const composerRef = useRef<ComposerHandle | null>(null);
   const toastId = useRef(0);
   const stateRef = useRef<AppState | null>(null);
-  const liveToolsRef = useRef<LiveTool[]>([]);
-  const restoreRef = useRef<{ subagents: boolean; goals: boolean }>({ subagents: false, goals: false });
+  const activeSessionKeyRef = useRef("unknown");
+  const liveBySessionRef = useRef(new Map<string, LiveSnapshot>());
+  const restoreRef = useRef<{
+    subagents: { enabled: boolean } | null;
+    goals: { enabled: boolean; goal: string } | null;
+  }>({ subagents: null, goals: null });
   const subagentsEnabledRef = useRef(subagentsEnabled);
   subagentsEnabledRef.current = subagentsEnabled;
   const goalsEnabledRef = useRef(goalsEnabled);
@@ -93,25 +123,27 @@ export default function App() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
   }, []);
 
-  const resetLive = useCallback(() => {
-    setLiveText("");
-    setLiveThinking("");
-    setLiveTools([]);
-    liveToolsRef.current = [];
-    setQueued(null);
+  const syncLive = useCallback((snapshot: LiveSnapshot) => {
+    setLiveText(snapshot.text);
+    setLiveThinking(snapshot.thinking);
+    setLiveTools(snapshot.tools);
+    setQueued(snapshot.queued);
   }, []);
 
   const restoreOneShot = useCallback(() => {
     const restore = restoreRef.current;
     if (restore.subagents) {
-      restore.subagents = false;
-      setSubagentsEnabled(false);
-      void setSubagents(false).catch((e) => toast("error", e.message));
+      const previous = restore.subagents;
+      restore.subagents = null;
+      setSubagentsEnabled(previous.enabled);
+      void setSubagents(previous.enabled).catch((e) => toast("error", e.message));
     }
     if (restore.goals) {
-      restore.goals = false;
-      setGoalsEnabled(false);
-      void setGoals(false, goalTextRef.current).catch((e) => toast("error", e.message));
+      const previous = restore.goals;
+      restore.goals = null;
+      setGoalsEnabled(previous.enabled);
+      setGoalText(previous.goal);
+      void setGoals(previous.enabled, previous.goal).catch((e) => toast("error", e.message));
     }
   }, [toast]);
 
@@ -119,76 +151,108 @@ export default function App() {
     (event: unknown) => {
       const e = event as {
         type: string;
+        sessionId?: string;
+        sessionFile?: string;
         assistantMessageEvent?: { type: string; delta?: string; thinking?: string };
         toolName?: string;
         toolCallId?: string;
+        args?: unknown;
         isError?: boolean;
         result?: unknown;
         content?: unknown;
+        partialResult?: unknown;
         steering?: unknown[];
         followUp?: unknown[];
+      };
+      const key = sessionKey(e.sessionId);
+      const activeKey = activeSessionKeyRef.current;
+      const current = liveBySessionRef.current.get(key) ?? emptyLiveSnapshot();
+      const next: LiveSnapshot = {
+        text: current.text,
+        thinking: current.thinking,
+        tools: [...current.tools],
+        queued: current.queued ? { ...current.queued } : null,
       };
 
       switch (e.type) {
         case "message_update": {
           const a = e.assistantMessageEvent;
-          if (a?.type === "text_delta") setLiveText((t) => t + (a.delta ?? ""));
-          else if (a?.type === "thinking_delta") setLiveThinking((t) => t + (a.delta ?? ""));
+          if (a?.type === "text_delta") next.text += a.delta ?? "";
+          else if (a?.type === "thinking_delta") next.thinking += a.delta ?? "";
           break;
         }
         case "tool_execution_start": {
-          const tool: LiveTool = {
-            key: `${e.toolCallId ?? "t"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          next.tools.push({
+            key: e.toolCallId ?? (Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
             name: e.toolName ?? "tool",
             status: "running",
-          };
-          liveToolsRef.current = [...liveToolsRef.current, tool];
-          setLiveTools(liveToolsRef.current);
+            args: formatResult(e.args),
+          });
           break;
         }
         case "tool_execution_update": {
-          const content = e.content;
-          if (typeof content === "string") {
-            liveToolsRef.current = liveToolsRef.current.map((t, i) =>
-              i === liveToolsRef.current.length - 1 ? { ...t, output: (t.output ?? "") + content } : t,
-            );
-            setLiveTools([...liveToolsRef.current]);
+          const toolKey = e.toolCallId;
+          const partial = e.partialResult ?? e.content;
+          if (partial !== undefined) {
+            const targetIndex = toolKey
+              ? next.tools.findIndex((tool) => tool.key === toolKey)
+              : next.tools.length - 1;
+            if (targetIndex >= 0) next.tools[targetIndex] = { ...next.tools[targetIndex], output: formatResult(partial) };
           }
           break;
         }
         case "tool_execution_end": {
-          liveToolsRef.current = liveToolsRef.current.map((t, i) =>
-            i === liveToolsRef.current.length - 1
-              ? { ...t, status: e.isError ? "error" : "done", output: formatResult(e.result) }
-              : t,
-          );
-          setLiveTools([...liveToolsRef.current]);
+          const toolKey = e.toolCallId;
+          const targetIndex = toolKey
+            ? next.tools.findIndex((tool) => tool.key === toolKey)
+            : next.tools.length - 1;
+          if (targetIndex >= 0) {
+            next.tools[targetIndex] = {
+              ...next.tools[targetIndex],
+              status: e.isError ? "error" : "done",
+              output: formatResult(e.result),
+            };
+          }
           break;
         }
-        case "queue_update": {
-          setQueued({ steering: e.steering?.length ?? 0, followUp: e.followUp?.length ?? 0 });
+        case "queue_update":
+          next.queued = { steering: e.steering?.length ?? 0, followUp: e.followUp?.length ?? 0 };
           break;
-        }
         case "agent_end":
         case "agent_settled":
-          restoreOneShot();
-          resetLive();
-          break;
+          liveBySessionRef.current.set(key, emptyLiveSnapshot());
+          if (key === activeKey) {
+            restoreOneShot();
+            syncLive(emptyLiveSnapshot());
+          }
+          return;
         case "auto_retry_start":
-          toast("warn", "模型出错，自动重试中…");
-          break;
+          if (key === activeKey) toast("warn", "??????????...");
+          return;
         case "compaction_start":
-          toast("info", "上下文压缩中…");
-          break;
+          if (key === activeKey) toast("info", "??????...");
+          return;
       }
+
+      liveBySessionRef.current.set(key, next);
+      if (key === activeKey) syncLive(next);
     },
-    [resetLive, restoreOneShot, toast],
+    [restoreOneShot, syncLive, toast],
   );
 
   const applyState = useCallback((s: AppState) => {
+    const key = sessionKey(s.sessionId);
+    activeSessionKeyRef.current = key;
     setState(s);
-    if (!s.isStreaming) resetLive();
-  }, [resetLive]);
+    if (!s.isStreaming) {
+      liveBySessionRef.current.delete(key);
+      syncLive(emptyLiveSnapshot());
+      return;
+    }
+    const snapshot = liveBySessionRef.current.get(key) ?? emptyLiveSnapshot();
+    liveBySessionRef.current.set(key, snapshot);
+    syncLive(snapshot);
+  }, [syncLive]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -313,17 +377,19 @@ export default function App() {
   }, []);
 
   const send = useCallback(
-    async (text: string, attachments?: AttachmentInfo[]) => {
+    async (text: string, attachments?: AttachmentInfo[], refs?: string[]) => {
       const one = oneShotRef.current;
       try {
         if (one.subagents && !subagentsEnabledRef.current) {
-          restoreRef.current.subagents = true;
+          restoreRef.current.subagents = { enabled: subagentsEnabledRef.current };
           await setSubagents(true);
           setSubagentsEnabled(true);
         }
-        if (one.goals && !goalsEnabledRef.current) {
-          restoreRef.current.goals = true;
-          await setGoals(true, goalTextRef.current);
+        if (one.goals) {
+          if (!restoreRef.current.goals) {
+            restoreRef.current.goals = { enabled: goalsEnabledRef.current, goal: goalTextRef.current };
+          }
+          await setGoals(true, buildOneShotGoal(text, goalTextRef.current));
           setGoalsEnabled(true);
         }
       } catch (e) {
@@ -331,10 +397,15 @@ export default function App() {
         return;
       }
       if (one.subagents || one.goals) setOneShot({ subagents: false, goals: false });
-      socketRef.current?.send({ type: "prompt", text, attachments });
+      socketRef.current?.send({ type: "prompt", text, attachments, refs });
     },
     [toast],
   );
+
+  const steer = useCallback((text: string) => {
+    if (!text.trim()) return;
+    socketRef.current?.send({ type: "steer", text: text.trim() });
+  }, []);
 
   const sendToolCommand = useCallback((command: string) => {
     socketRef.current?.send({ type: "mcp_command", command });
@@ -387,6 +458,7 @@ export default function App() {
         activeAgentId={state?.activeAgent?.id}
         agents={agents}
         onSend={send}
+        onSteer={steer}
         onAbort={() => socketRef.current?.send({ type: "abort" })}
         onSetModel={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
         onSetAgent={(id) => {
@@ -452,6 +524,25 @@ export default function App() {
             {state?.model?.displayName ?? ""}
             {state?.cwd ? ` · ${state.cwd.split(/[\\/]/).pop()}` : ""}
           </span>
+        </div>
+        <div className="session-tabs" role="tablist" aria-label="打开的会话">
+          {sessions.slice(0, 8).map((session) => {
+            const active = state?.sessionFile === session.file;
+            return (
+              <button
+                key={session.id}
+                className={`session-tab${active ? " active" : ""}`}
+                onClick={() => switchSession(session.file)}
+                role="tab"
+                aria-selected={active}
+                title={session.file}
+              >
+                <span className="session-tab-name">{session.name || session.firstMessage || "新会话"}</span>
+                <span className="session-tab-count">{session.messageCount}</span>
+              </button>
+            );
+          })}
+          <button className="session-tab session-tab-new" onClick={newSession} title="新建会话">＋</button>
         </div>
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>

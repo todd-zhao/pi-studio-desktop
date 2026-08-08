@@ -769,11 +769,23 @@ async function attachWebSocket(ws: WebSocket): Promise<void> {
     bridge.off("wechat_log", onWechatLog);
   });
 
+  let promptQueue: Promise<void> = Promise.resolve();
   ws.on("message", (raw) => {
     let msg: ClientWsMessage;
     try {
       msg = JSON.parse(raw.toString()) as ClientWsMessage;
     } catch {
+      return;
+    }
+
+    // Prompt calls must be processed in arrival order. The SDK keeps the
+    // streaming state on the session, so starting two prompt handlers at the
+    // same time can make both of them observe `isStreaming === false` and
+    // launch duplicate agent runs. Keep steering, follow-up, and abort
+    // commands immediate so they can still control a running task.
+    if (msg.type === "prompt") {
+      const previous = promptQueue.catch(() => undefined);
+      promptQueue = previous.then(() => handleClientMessage(ws, msg));
       return;
     }
     void handleClientMessage(ws, msg);
