@@ -287,7 +287,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
   };
 
-  const handleFiles = async (list: FileList | null) => {
+  const handleFiles = async (list: FileList | File[]) => {
     if (!list || list.length === 0) return;
     setUploading(true);
     try {
@@ -298,6 +298,16 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } finally {
       setUploading(false);
     }
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData?.items ?? [])
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const files = items.length > 0 ? items : Array.from(event.clipboardData?.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void handleFiles(files);
   };
 
   const send = () => {
@@ -383,6 +393,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             value={text}
             onChange={(e) => handleChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
           />
           <input
             ref={fileRef}
@@ -390,7 +401,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
-              void handleFiles(e.target.files);
+              if (e.target.files) void handleFiles(e.target.files);
               e.target.value = "";
             }}
           />
