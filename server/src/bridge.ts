@@ -411,7 +411,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       promptText = "## Active long-running goal and audit policy\n<active-goal>\n" + longGoal.trim() + "\n</active-goal>\nTreat this as the durable objective for the current work. Break it into verifiable milestones, keep checking completed work against the objective and actual evidence, and do not report the goal complete until its acceptance criteria are demonstrably satisfied.\n\n## User request\n" + promptText;
     }
     if (refs && refs.length > 0) {
-      promptText += "\n\n[Referenced workspace files]\n" + refs.map((r) => "- " + r).join("\n");
+      promptText += "\n\n[Referenced workspace paths]\n" + refs.map((r) => {
+        const isDir = r.endsWith("/") || r.endsWith("\\");
+        return `- ${r}${isDir ? " (directory, list and read relevant files)" : ""}`;
+      }).join("\n");
     }
     const files = attachments ?? [];
     if (files.length > 0) {

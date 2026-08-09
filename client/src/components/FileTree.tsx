@@ -69,6 +69,16 @@ function DirRow({ entry, depth, onPickFile, onPreview, onPickDir }: {
         <span className="ft-arrow">{open ? "▾" : "▸"}</span>
         <span className="ft-icon">📁</span>
         <span className="ft-name">{entry.name}</span>
+        <button
+          className="ft-add"
+          title={`插入引用 @${entry.path}/`}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onPickDir?.(entry.path);
+          }}
+        >
+          ＋
+        </button>
       </div>
       {open && (
         <div>

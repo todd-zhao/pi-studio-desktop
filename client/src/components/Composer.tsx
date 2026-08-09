@@ -15,6 +15,7 @@ interface Props {
   onSetModel: (provider: string, id: string) => void;
   onSetAgent: (id: string) => void;
   onSend: (text: string, attachments?: AttachmentInfo[], refs?: string[]) => void;
+  onPickFolder: () => void;
   onSteer: (text: string) => void;
   onAbort: () => void;
   onError: (message: string) => void;
@@ -58,8 +59,7 @@ function extractRefs(text: string): string[] {
   const re = /@([^\s@，。；：,;:"'`()]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
-    const p = m[1];
-    if (/^[A-Za-z]:[\\/]/.test(p)) continue; // absolute Windows path → not a ref
+    const p = m[1].replace(/\\/g, "/");
     if (p.startsWith("/")) continue;
     if (p.includes("://")) continue;
     if (!out.includes(p)) out.push(p);
@@ -68,7 +68,7 @@ function extractRefs(text: string): string[] {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { isStreaming, model, models, agents, activeAgentId, onSetModel, onSetAgent, onSend, onSteer, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
+  { isStreaming, model, models, agents, activeAgentId, onSetModel, onSetAgent, onSend, onPickFolder, onSteer, onAbort, onError, oneShot, onTaskModeChange, goalText, onGoalTextChange, onSaveGoalText }: Props,
   ref,
 ) {
   const visibleModelName = model?.displayName && !/^unknown(?:[/]unknown)?$/i.test(model.displayName) ? model.displayName : "";
@@ -513,6 +513,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           </div>
           <button className="icon-btn" title="上传文件/图片" disabled={uploading} onClick={() => fileRef.current?.click()}>
             {uploading ? <span className="spinner" /> : "📎"}
+          </button>
+          <button className="icon-btn" title="添加文件夹路径" onClick={onPickFolder}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+              <path d="M3 11h18" />
+            </svg>
           </button>
           {isStreaming ? (
             <>

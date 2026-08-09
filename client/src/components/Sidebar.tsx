@@ -30,6 +30,7 @@ interface Props {
   onRefreshSessions: () => void;
   onSetThinking: (level: string) => void;
   onPickFile: (relPath: string, name: string) => void;
+  onPickDir: (relPath: string) => void;
   onPreviewFile: (relPath: string, name: string) => void;
   onCollapse: () => void;
 }
@@ -346,7 +347,7 @@ export function Sidebar(props: Props) {
         </div>
       ) : (
           <div className="session-list">
-            <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} />
+            <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} onPickDir={props.onPickDir} />
           </div>
         )}
       </div>

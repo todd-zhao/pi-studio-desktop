@@ -4,6 +4,7 @@ import type { FileEntry } from "../types";
 
 interface Props {
   initialPath?: string;
+  title?: string;
   onSelect: (path: string) => void;
   onClose: () => void;
 }
@@ -24,7 +25,7 @@ function fmtPath(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
-export function DirPicker({ initialPath, onSelect, onClose }: Props) {
+export function DirPicker({ initialPath, title = "选择工作区目录", onSelect, onClose }: Props) {
   const [path, setPath] = useState(initialPath ?? "");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -80,7 +81,7 @@ export function DirPicker({ initialPath, onSelect, onClose }: Props) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" style={{ width: "min(560px, 92vw)" }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="nm">选择工作区目录</span>
+          <span className="nm">{title}</span>
           <button className="modal-close" onClick={onClose}>
             ✕
           </button>

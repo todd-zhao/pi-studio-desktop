@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSPrope
 import { PiSocket, assignSessionToProject, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listProjects, listSessions, removeProject, removeSessionFromProject, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
 import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
+import { DirPicker } from "./components/DirPicker";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { LongTaskQueue } from "./components/LongTaskQueue";
@@ -87,6 +88,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth("pi-studio-sidebar-width", 264, 220, 420));
   const [rightPanelWidth, setRightPanelWidth] = useState(() => storedPaneWidth("pi-studio-right-panel-width", 380, 280, 600));
   const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {
       const urlTheme = new URLSearchParams(location.search).get("theme");
@@ -543,6 +545,12 @@ export default function App() {
     composerRef.current?.insertText(`@${relPath}`);
   }, []);
 
+  const handlePickDir = useCallback((path: string) => {
+    const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (normalized) composerRef.current?.insertText(`@${normalized}/`);
+    setFolderPickerOpen(false);
+  }, []);
+
   const newSession = useCallback(() => {
     socketRef.current?.send({ type: "new_session" });
   }, []);
@@ -584,6 +592,7 @@ export default function App() {
         activeAgentId={state?.activeAgent?.id}
         agents={agents}
         onSend={send}
+        onPickFolder={() => setFolderPickerOpen(true)}
         onSteer={steer}
         onAbort={() => socketRef.current?.send({ type: "abort" })}
         onSetModel={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
@@ -645,6 +654,7 @@ export default function App() {
           onSwitchWorkspace={switchWorkspace}
           onAddWorkspace={addWorkspace}
           onPickFile={handlePickFile}
+          onPickDir={handlePickDir}
           onPreviewFile={(path, name) => setPreview({ path, name })}
           onCollapse={() => setSidebarOpen(false)}
           onRefreshSessions={() => void refreshSessions()}
@@ -770,6 +780,14 @@ export default function App() {
         />
       )}
       </Suspense>
+      {folderPickerOpen && (
+        <DirPicker
+          title="选择要引用的文件夹"
+          initialPath={state?.cwd}
+          onSelect={handlePickDir}
+          onClose={() => setFolderPickerOpen(false)}
+        />
+      )}
       {question && (
         <div className="ask-user-backdrop" role="dialog" aria-modal="true" aria-label="Agent 澄清问题">
           <div className="ask-user-card">
