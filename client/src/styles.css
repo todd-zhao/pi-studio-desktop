@@ -4012,6 +4012,25 @@ body {
   color: var(--accent);
 }
 
+.message-copy {
+  display: block;
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+
+.msg-user .message-copy {
+  margin-left: auto;
+}
+
+.message-copy:hover {
+  color: var(--accent);
+}
+
 /* Project/session tree */
 .project-tree-list {
   padding: 4px 6px 12px;

@@ -1,5 +1,5 @@
 // Minimal Markdown renderer (no external deps).
-import { Fragment, type ReactNode } from "react";
+import React, { Fragment, type ReactNode } from "react";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -55,6 +55,14 @@ function parseInline(text: string): ReactNode[] {
 
 function renderInline(text: string): ReactNode {
   return <>{parseInline(text)}</>;
+}
+
+function pipeCount(line: string): number {
+  return (line.match(/\|/g) ?? []).length;
+}
+
+function isTableSeparator(line: string): boolean {
+  return /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
 }
 
 function parseBlocks(src: string): Token[] {
@@ -127,20 +135,22 @@ function parseBlocks(src: string): Token[] {
       continue;
     }
 
-    // table
-    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+    // table (separator optional; AI output sometimes omits the alignment row)
+    const hasTableSeparator = i + 1 < lines.length && isTableSeparator(lines[i + 1]);
+    const looksLikeTable = line.includes("|") && i + 1 < lines.length &&
+      (hasTableSeparator || (pipeCount(line) >= 2 && lines[i + 1].includes("|")));
+    if (looksLikeTable) {
       const header = line
         .split("|")
         .map((s) => s.trim())
         .filter((s) => s !== "");
-      const alignRow = lines[i + 1];
-      const aligns = alignRow
+      const aligns = hasTableSeparator ? lines[i + 1]
         .split("|")
         .map((s) => s.trim())
         .filter((s) => s !== "")
-        .map((s) => (s.startsWith(":") && s.endsWith(":") ? "center" : s.endsWith(":") ? "right" : s.startsWith(":") ? "left" : "left"));
+        .map((s) => (s.startsWith(":") && s.endsWith(":") ? "center" : s.endsWith(":") ? "right" : s.startsWith(":") ? "left" : "left")) : [];
       const rows: string[][] = [];
-      i += 2;
+      i += hasTableSeparator ? 2 : 1;
       while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
         rows.push(
           lines[i]

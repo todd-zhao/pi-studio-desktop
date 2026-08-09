@@ -109,6 +109,17 @@ interface MessageProps {
 }
 
 export function Message({ msg, onSaveMemory, canSaveMemory }: MessageProps) {
+  const [copied, setCopied] = useState(false);
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(msg.text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard may be unavailable */
+    }
+  };
+
   if (msg.role === "user") {
     return (
       <div className="msg-user">
@@ -123,8 +134,9 @@ export function Message({ msg, onSaveMemory, canSaveMemory }: MessageProps) {
               ))}
             </div>
           )}
-          {msg.text}
+          <Markdown text={msg.text} />
         </div>
+        {msg.text && <button className="message-copy" onClick={() => void copyText()}>{copied ? "已复制" : "复制"}</button>}
       </div>
     );
   }
@@ -164,6 +176,7 @@ export function Message({ msg, onSaveMemory, canSaveMemory }: MessageProps) {
       {canSaveMemory && msg.text && (
         <button className="message-action" type="button" onClick={() => onSaveMemory?.(msg)}>保存为项目记忆</button>
       )}
+      {msg.text && <button className="message-copy" onClick={() => void copyText()}>{copied ? "已复制" : "复制"}</button>}
 
       {!msg.text && !msg.thinking && !msg.errorMessage && (msg.toolCalls?.length ?? 0) === 0 && (
         <div className="empty-inline">（空响应）</div>
