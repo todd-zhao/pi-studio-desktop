@@ -58,6 +58,17 @@ export interface SessionMeta {
   projectName?: string;
 }
 
+export interface ArchivedSession {
+  file: string;
+  name?: string;
+  createdAt?: number;
+  messageCount: number;
+  firstMessage?: string;
+  projectId?: string;
+  projectName?: string;
+  archivedAt: number;
+}
+
 export type ProjectMemoryType = "decision" | "fact" | "preference" | "summary";
 
 export interface ProjectMemory {
@@ -202,6 +213,8 @@ export type ClientWsMessage =
   | { type: "clear_long_tasks" }
   | { type: "steer"; text: string }
   | { type: "followUp"; text: string }
+  | { type: "cancel_queue_item"; kind: "steer" | "followUp"; text: string }
+  | { type: "edit_queue_item"; kind: "steer" | "followUp"; oldText: string; newText: string }
   | { type: "abort" }
   | { type: "new_session"; projectId?: string }
   | { type: "list_sessions" }
@@ -235,6 +248,8 @@ export type ServerWsMessage =
 
 export interface AskUserQuestion {
   id: string;
+  sessionId?: string;
+  sessionName?: string;
   question: string;
   options: Array<{ label: string; description?: string }>;
   allowFreeform: boolean;

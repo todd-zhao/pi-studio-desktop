@@ -27,7 +27,20 @@ import { repairUploadedFilename } from "./textEncoding.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..", "..");
-const WORKSPACE = process.env.PI_STUDIO_WORKSPACE ? resolve(process.env.PI_STUDIO_WORKSPACE) : join(ROOT, "workspace");
+const DEFAULT_WORKSPACE = process.env.PI_STUDIO_WORKSPACE ? resolve(process.env.PI_STUDIO_WORKSPACE) : join(ROOT, "workspace");
+function resolveInitialWorkspace(): string {
+  try {
+    const data = JSON.parse(readFileSync(join(ROOT, "data", "workspaces.json"), "utf8")) as { active?: string };
+    if (typeof data.active === "string" && data.active) {
+      const abs = resolve(data.active);
+      if (existsSync(abs) && statSync(abs).isDirectory()) return abs;
+    }
+  } catch {
+    /* first launch or missing workspace file */
+  }
+  return DEFAULT_WORKSPACE;
+}
+const WORKSPACE = resolveInitialWorkspace();
 const CLIENT_DIST = join(ROOT, "client", "dist");
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 8787);
 const AUTH_TOKEN = process.env.PI_STUDIO_AUTH_TOKEN ?? "";
@@ -61,7 +74,7 @@ function mcpConfigFile(): string {
   return join(AGENT_DIR, "mcp.json");
 }
 
-mkdirSync(join(WORKSPACE, "uploads"), { recursive: true });
+mkdirSync(join(DEFAULT_WORKSPACE, "uploads"), { recursive: true });
 
 // ------------------------------------------------------------------ bridge
 
@@ -348,6 +361,18 @@ app.get("/api/workspace/files", (req, res) => {
   try {
     const path = String(req.query.path ?? "");
     res.json({ entries: bridge.listWorkspaceFiles(path) });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/workspace/files/move", (req, res) => {
+  try {
+    const source = String(req.body?.source ?? "");
+    const destination = String(req.body?.destination ?? "");
+    if (!source || !destination) throw new Error("缺少源文件或目标文件夹");
+    bridge.moveWorkspaceFile(source, destination);
+    res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -797,6 +822,41 @@ app.delete("/api/sessions", async (req, res) => {
   }
 });
 
+app.get("/api/archived-sessions", async (_req, res) => {
+  res.json(await bridge.listArchivedSessions());
+});
+
+app.post("/api/sessions/archive", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    res.json({ ok: true, ...(await bridge.archiveSession(file)) });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/sessions/restore", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    await bridge.restoreSession(file);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.delete("/api/archived-sessions", async (req, res) => {
+  try {
+    const file = String(req.body?.file ?? "");
+    if (!file) throw new Error("Missing session file");
+    res.json({ ok: true, ...(await bridge.deleteArchivedSession(file)) });
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 // ------------------------------------------------------------ static client
 
 const indexHtml = join(CLIENT_DIST, "index.html");
@@ -942,6 +1002,12 @@ async function handleClientMessage(ws: WebSocket, msg: ClientWsMessage): Promise
       case "followUp":
         await bridge.followUp(msg.text);
         break;
+      case "cancel_queue_item":
+        await bridge.cancelQueueItem(msg.kind, msg.text);
+        break;
+      case "edit_queue_item":
+        await bridge.editQueueItem(msg.kind, msg.oldText, msg.newText);
+        break;
       case "abort":
         await bridge.abort();
         break;
@@ -1017,6 +1083,7 @@ async function startBridge(): Promise<void> {
     startupLog("import-bridge-done");
     nextBridge = new PiBridgeClass({
       cwd: WORKSPACE,
+      defaultWorkspacePath: DEFAULT_WORKSPACE,
       agentDir: AGENT_DIR,
       mcpConfigPath: mcpConfigFile(),
       loadGlobalExtensions: process.env.PI_STUDIO_LOAD_GLOBAL_EXTENSIONS === "1",

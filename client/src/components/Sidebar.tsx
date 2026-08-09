@@ -20,6 +20,7 @@ interface Props {
   onNewSession: () => void;
   onSwitchSession: (file: string) => void;
   onDeleteSession: (file: string) => void;
+  onArchiveSession: (file: string) => void;
   onProjectSelect: (id: string | null) => void;
   onManageProjects: () => void;
   onNewProjectSession: (projectId: string) => void;
@@ -79,6 +80,7 @@ export function Sidebar(props: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
   const [confirmingDeleteFile, setConfirmingDeleteFile] = useState<string | null>(null);
+  const [movingSession, setMovingSession] = useState<SessionMeta | null>(null);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(new Set());
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string | null>(null);
 
@@ -122,17 +124,16 @@ export function Sidebar(props: Props) {
       {nested && <span className="tree-branch" aria-hidden="true" />}
       <div className="name tree-session-name" title={session.name || session.firstMessage || session.file.split(/[\\/]/).pop()}>
         <span className="tree-session-label">{session.name || session.firstMessage || session.file.split(/[\\/]/).pop()}</span>
-        {!session.projectId && (
-          <select
-            value={session.projectId ?? ""}
-            title="归档到项目"
-            onChange={(event) => { event.stopPropagation(); props.onAssignSession(session.file, event.target.value || null); }}
-            className="tree-session-project-select"
-          >
-            <option value="">未归档</option>
-            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-        )}
+        <button
+          className="session-move-btn"
+          title="移动到项目/工作空间"
+          onClick={(event) => {
+            event.stopPropagation();
+            setMovingSession(session);
+          }}
+        >
+          ⇱
+        </button>
         <button
           className={`session-delete-btn${confirmingDeleteFile === session.file ? " confirming" : ""}`}
           title={confirmingDeleteFile === session.file ? "再次点击确认删除" : "删除对话"}
@@ -148,6 +149,16 @@ export function Sidebar(props: Props) {
           }}
         >
           {confirmingDeleteFile === session.file ? "确认" : "×"}
+        </button>
+        <button
+          className="session-archive-btn"
+          title="归档对话"
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onArchiveSession(session.file);
+          }}
+        >
+          🗂
         </button>
       </div>
       <div className="meta">{session.messageCount} 条消息 · {fmtTime(session.createdAt)}</div>
@@ -328,10 +339,10 @@ export function Sidebar(props: Props) {
               if (next.has("__unassigned__")) next.delete("__unassigned__"); else next.add("__unassigned__");
               return next;
             })}>
-              <button className="project-tree-toggle" aria-label="展开或折叠未归档会话" title="展开或折叠未归档会话">
+              <button className="project-tree-toggle" aria-label="展开或折叠临时对话" title="展开或折叠临时对话">
                 {collapsedProjectIds.has("__unassigned__") ? "▸" : "▾"}
               </button>
-              <span className="project-tree-name">未归档会话</span>
+              <span className="project-tree-name">临时对话</span>
             </div>
             {!collapsedProjectIds.has("__unassigned__") && (
               <div className="project-tree-children">
@@ -347,12 +358,22 @@ export function Sidebar(props: Props) {
         </div>
       ) : (
           <div className="session-list">
-            <FileTree key={state?.cwd ?? ""} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} onPickDir={props.onPickDir} />
+            <FileTree key={state?.cwd ?? ""} rootPath={state?.cwd} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} onPickDir={props.onPickDir} />
           </div>
         )}
       </div>
 
-      <div className="sidebar-section">功能</div>
+      <div className="sidebar-section feature-head">
+        <span>功能</span>
+        <button
+          className={`feature-archive-btn${activePanel === "archived" ? " active" : ""}`}
+          onClick={() => props.onPanel(activePanel === "archived" ? null : "archived")}
+          title="已归档对话"
+        >
+          <span className="feature-archive-icon">🗂</span>
+          <span>已归档对话</span>
+        </button>
+      </div>
       <div className="feature-grid">
         <button className={`feature-btn ${activePanel === "projects" ? "active" : ""}`} onClick={() => props.onPanel(activePanel === "projects" ? null : "projects")}>
           <span className="feature-icon">▣</span>
@@ -449,6 +470,43 @@ export function Sidebar(props: Props) {
                 <button className="mini-btn primary" onClick={() => openPanel("wechat")}>打开微信连接</button>
               </div>
             </SettingsGroup>
+            </div>
+          </div>
+        </div>
+      )}
+      {movingSession && (
+        <div className="modal-backdrop" onClick={() => setMovingSession(null)}>
+          <div className="modal" style={{ width: "min(420px, 90vw)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="nm">移动到项目/工作空间</span>
+              <button className="modal-close" onClick={() => setMovingSession(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <button
+                className={`move-target-item${!movingSession.projectId ? " sel" : ""}`}
+                onClick={() => {
+                  const file = movingSession.file;
+                  setMovingSession(null);
+                  props.onAssignSession(file, null);
+                }}
+              >
+                <strong>临时对话</strong>
+                <small>未归入任何项目</small>
+              </button>
+              {projects.map((project) => (
+                <button
+                  key={project.id}
+                  className={`move-target-item${movingSession.projectId === project.id ? " sel" : ""}`}
+                  onClick={() => {
+                    const file = movingSession.file;
+                    setMovingSession(null);
+                    props.onAssignSession(file, project.id);
+                  }}
+                >
+                  <strong>{project.name}</strong>
+                  <small>{project.sessionCount} 个会话</small>
+                </button>
+              ))}
             </div>
           </div>
         </div>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ClientMessage } from "../types";
 import { LiveToolCallCard, Message } from "./Message";
 import { Markdown } from "./markdown";
-import type { RenderedMessage } from "../App";
+import type { QueuedItem, RenderedMessage } from "../App";
 
 interface LiveState {
   liveText: string;
@@ -13,15 +13,19 @@ interface LiveState {
 interface Props {
   messages: RenderedMessage[];
   live: LiveState;
-  queued: { steering: number; followUp: number } | null;
+  queued: QueuedItem[] | null;
   isStreaming: boolean;
+  onCancelQueued: (kind: "steer" | "followUp", text: string) => void;
+  onEditQueued: (kind: "steer" | "followUp", oldText: string, newText: string) => void;
   onSaveMemory?: (message: RenderedMessage) => void;
   canSaveMemory?: boolean;
 }
 
-export function Chat({ messages, live, queued, isStreaming, onSaveMemory, canSaveMemory }: Props) {
+export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEditQueued, onSaveMemory, canSaveMemory }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [stickBottom, setStickBottom] = useState(true);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
   const showEmpty = messages.length === 0 && !isStreaming && !live.liveText;
 
   useEffect(() => {
@@ -49,10 +53,61 @@ export function Chat({ messages, live, queued, isStreaming, onSaveMemory, canSav
           <Message key={m.id} msg={m} onSaveMemory={onSaveMemory} canSaveMemory={canSaveMemory} />
         ))}
 
-        {queued && (queued.steering > 0 || queued.followUp > 0) && (
+        {queued && queued.length > 0 && (
           <div className="queued-bar">
-            ⏳ 队列中：{queued.steering > 0 ? `${queued.steering} 条干预` : ""}
-            {queued.followUp > 0 ? `${queued.followUp} 条后续` : ""}
+            <div className="queued-title">消息队列</div>
+            {queued.map((item, index) => (
+              <div className="queued-item" key={`${item.kind}-${item.text}-${index}`}>
+                <span className={`queued-kind ${item.kind}`}>{item.kind === "steer" ? "干预" : "后续"}</span>
+                {editingIndex === index ? (
+                  <input
+                    className="queued-edit"
+                    value={editingText}
+                    autoFocus
+                    onChange={(e) => setEditingText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (editingText.trim()) onEditQueued(item.kind, item.text, editingText);
+                        setEditingIndex(null);
+                      } else if (e.key === "Escape") {
+                        setEditingIndex(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <span className="queued-text">{item.text}</span>
+                )}
+                {editingIndex === index ? (
+                  <>
+                    <button
+                      className="queued-action"
+                      disabled={!editingText.trim()}
+                      onClick={() => {
+                        if (editingText.trim()) onEditQueued(item.kind, item.text, editingText);
+                        setEditingIndex(null);
+                      }}
+                    >
+                      保存
+                    </button>
+                    <button className="queued-action" onClick={() => setEditingIndex(null)}>取消</button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="queued-action"
+                      onClick={() => {
+                        setEditingIndex(index);
+                        setEditingText(item.text);
+                      }}
+                    >
+                      修改
+                    </button>
+                    <button className="queued-action danger" onClick={() => onCancelQueued(item.kind, item.text)}>取消</button>
+                  </>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

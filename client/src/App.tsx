@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { PiSocket, assignSessionToProject, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listProjects, listSessions, removeProject, removeSessionFromProject, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
-import type { AgentProfile, AppState, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
+import { PiSocket, archiveSession as archiveSessionApi, assignSessionToProject, deleteArchivedSession as deleteArchivedSessionApi, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listArchivedSessions, listProjects, listSessions, removeProject, removeSessionFromProject, restoreSession as restoreSessionApi, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
+import type { AgentProfile, AppState, ArchivedSession, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { DirPicker } from "./components/DirPicker";
 import { Chat } from "./components/Chat";
@@ -15,6 +15,7 @@ const TeamPanel = lazy(() => import("./components/TeamPanel").then((module) => (
 const SchedulesPanel = lazy(() => import("./components/SchedulesPanel").then((module) => ({ default: module.SchedulesPanel })));
 const WechatPanel = lazy(() => import("./components/WechatPanel").then((module) => ({ default: module.WechatPanel })));
 const ProjectsPanel = lazy(() => import("./components/ProjectsPanel").then((module) => ({ default: module.ProjectsPanel })));
+const ArchivedSessionsPanel = lazy(() => import("./components/ArchivedSessionsPanel").then((module) => ({ default: module.ArchivedSessionsPanel })));
 const FilePreview = lazy(() => import("./components/FilePreview").then((module) => ({ default: module.FilePreview })));
 
 export interface LiveTool {
@@ -25,11 +26,16 @@ export interface LiveTool {
   output?: string;
 }
 
+export interface QueuedItem {
+  kind: "steer" | "followUp";
+  text: string;
+}
+
 export interface LiveSnapshot {
   text: string;
   thinking: string;
   tools: LiveTool[];
-  queued: { steering: number; followUp: number } | null;
+  queued: QueuedItem[] | null;
 }
 
 function emptyLiveSnapshot(): LiveSnapshot {
@@ -71,11 +77,12 @@ export interface RenderedMessage extends ClientMessage {
   toolResults?: Record<string, { text: string; isError: boolean }>;
 }
 
-export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat" | "projects";
+export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat" | "projects" | "archived";
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
@@ -107,7 +114,7 @@ export default function App() {
   const [liveText, setLiveText] = useState("");
   const [liveThinking, setLiveThinking] = useState("");
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
-  const [queued, setQueued] = useState<{ steering: number; followUp: number } | null>(null);
+  const [queued, setQueued] = useState<QueuedItem[] | null>(null);
   const [subagentsEnabled, setSubagentsEnabled] = useState(false);
   const [goalsEnabled, setGoalsEnabled] = useState(false);
   const [goalText, setGoalText] = useState("");
@@ -115,8 +122,8 @@ export default function App() {
   const [wechatQr, setWechatQr] = useState<WechatQr | null>(null);
   const [wechatLogs, setWechatLogs] = useState<WechatLogEntry[]>([]);
   const [oneShot, setOneShot] = useState<{ subagents: boolean; goals: boolean }>({ subagents: false, goals: false });
-  const [question, setQuestion] = useState<AskUserQuestion | null>(null);
-  const [customAnswer, setCustomAnswer] = useState("");
+  const [questions, setQuestions] = useState<AskUserQuestion[]>([]);
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
 
   const socketRef = useRef<PiSocket | null>(null);
   const composerRef = useRef<ComposerHandle | null>(null);
@@ -217,8 +224,8 @@ export default function App() {
         result?: unknown;
         content?: unknown;
         partialResult?: unknown;
-        steering?: unknown[];
-        followUp?: unknown[];
+        steering?: string[];
+        followUp?: string[];
       };
       const key = sessionKey(e.sessionId);
       const activeKey = activeSessionKeyRef.current;
@@ -277,7 +284,10 @@ export default function App() {
           break;
         }
         case "queue_update":
-          next.queued = { steering: e.steering?.length ?? 0, followUp: e.followUp?.length ?? 0 };
+          next.queued = [
+            ...(e.steering ?? []).map((text) => ({ kind: "steer" as const, text })),
+            ...(e.followUp ?? []).map((text) => ({ kind: "followUp" as const, text })),
+          ];
           break;
         case "agent_end":
         case "agent_settled":
@@ -386,8 +396,7 @@ export default function App() {
           setBootStatus({ state: "error", message: msg.message });
           break;
         case "ask_user":
-          setCustomAnswer("");
-          setQuestion(msg.question);
+          setQuestions((prev) => prev.some((q) => q.id === msg.question.id) ? prev : [...prev, msg.question]);
           break;
         case "wechat_status":
           setWechatStatus(msg.status);
@@ -438,6 +447,18 @@ export default function App() {
     }
   }, []);
 
+  const refreshArchived = useCallback(async () => {
+    try {
+      setArchivedSessions(await listArchivedSessions());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (panel === "archived") void refreshArchived();
+  }, [panel, refreshArchived]);
+
   useEffect(() => {
     if (openTabsInitializedRef.current || sessions.length === 0) return;
     openTabsInitializedRef.current = true;
@@ -464,6 +485,49 @@ export default function App() {
       toast("error", (error as Error).message);
     }
   }, [refreshSessions, state?.sessionFile, toast]);
+
+  const handleArchiveSession = useCallback(async (file: string) => {
+    try {
+      const result = await archiveSessionApi(file);
+      setOpenTabFiles((prev) => prev.filter((f) => f !== file));
+      await refreshSessions();
+      await refreshArchived();
+      setProjects(await listProjects());
+      if (result.activeFile && result.activeFile !== state?.sessionFile) {
+        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
+      }
+      toast("ok", "对话已归档");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [refreshSessions, refreshArchived, state?.sessionFile, toast]);
+
+  const handleRestoreArchived = useCallback(async (file: string) => {
+    try {
+      await restoreSessionApi(file);
+      await refreshArchived();
+      await refreshSessions();
+      setProjects(await listProjects());
+      toast("ok", "对话已还原");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [refreshArchived, refreshSessions, toast]);
+
+  const handleDeleteArchived = useCallback(async (file: string) => {
+    try {
+      const result = await deleteArchivedSessionApi(file);
+      await refreshArchived();
+      await refreshSessions();
+      setProjects(await listProjects());
+      if (result.activeFile && result.activeFile !== state?.sessionFile) {
+        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
+      }
+      toast("ok", "已删除归档对话");
+    } catch (error) {
+      toast("error", (error as Error).message);
+    }
+  }, [refreshArchived, refreshSessions, state?.sessionFile, toast]);
 
   const assignSession = useCallback(async (file: string, projectId: string | null) => {
     try {
@@ -543,6 +607,16 @@ export default function App() {
     socketRef.current?.send({ type: "steer", text: text.trim() });
   }, []);
 
+  const cancelQueued = useCallback((kind: "steer" | "followUp", text: string) => {
+    socketRef.current?.send({ type: "cancel_queue_item", kind, text });
+  }, []);
+
+  const editQueued = useCallback((kind: "steer" | "followUp", oldText: string, newText: string) => {
+    const text = newText.trim();
+    if (!text || text === oldText) return;
+    socketRef.current?.send({ type: "edit_queue_item", kind, oldText, newText: text });
+  }, []);
+
   const sendToolCommand = useCallback((command: string) => {
     socketRef.current?.send({ type: "mcp_command", command });
   }, []);
@@ -601,6 +675,8 @@ export default function App() {
         live={{ liveText, liveThinking, liveTools }}
         queued={queued}
         isStreaming={state?.isStreaming ?? false}
+        onCancelQueued={cancelQueued}
+        onEditQueued={editQueued}
         onSaveMemory={saveMessageAsMemory}
         canSaveMemory={Boolean(state?.project?.id)}
       />
@@ -633,10 +709,16 @@ export default function App() {
       />
     </>
   );
-  const answerQuestion = (answer: string) => {
-    if (!question || !answer.trim()) return;
-    socketRef.current?.send({ type: "ask_user_answer", id: question.id, answer: answer.trim() });
-    setQuestion(null); setCustomAnswer("");
+  const answerQuestion = (id: string, answer: string) => {
+    const text = answer.trim();
+    if (!text) return;
+    socketRef.current?.send({ type: "ask_user_answer", id, answer: text });
+    setQuestions((prev) => prev.filter((q) => q.id !== id));
+    setQuestionAnswers((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   return (
@@ -671,6 +753,7 @@ export default function App() {
           onNewSession={newSession}
           onSwitchSession={switchSession}
           onDeleteSession={handleDeleteSession}
+          onArchiveSession={handleArchiveSession}
           onProjectSelect={setSelectedProjectId}
           onManageProjects={() => setPanel("projects")}
           onNewProjectSession={newProjectSession}
@@ -810,6 +893,16 @@ export default function App() {
           />
         </div>
       )}
+      {panel === "archived" && (
+        <div className="right-panel">
+          <ArchivedSessionsPanel
+            sessions={archivedSessions}
+            onRestore={(file) => void handleRestoreArchived(file)}
+            onDelete={(file) => void handleDeleteArchived(file)}
+            onClose={() => setPanel(null)}
+          />
+        </div>
+      )}
       {preview && (
         <FilePreview
           file={preview}
@@ -826,26 +919,38 @@ export default function App() {
           onClose={() => setFolderPickerOpen(false)}
         />
       )}
-      {question && (
+      {questions.length > 0 && (
         <div className="ask-user-backdrop" role="dialog" aria-modal="true" aria-label="Agent 澄清问题">
-          <div className="ask-user-card">
-            <div className="ask-user-kicker">Agent 需要确认</div>
-            <div className="ask-user-question"><Markdown text={question.question} /></div>
-            {question.options.length > 0 && (
-              <div className="ask-user-options">
-                {question.options.map((option, index) => (
-                  <button key={`${option.label}-${index}`} className="ask-user-option" onClick={() => answerQuestion(option.label)}>
-                    <strong>{option.label}</strong>
-                    {option.description && <small>{option.description}</small>}
-                  </button>
-                ))}
+          <div className="ask-user-card ask-user-list-card">
+            {questions.map((question) => (
+              <div className="ask-user-item" key={question.id}>
+                <div className="ask-user-kicker">
+                  {question.sessionName ? `会话 ${question.sessionName}` : "Agent 需要确认"}
+                </div>
+                <div className="ask-user-question"><Markdown text={question.question} /></div>
+                {question.options.length > 0 && (
+                  <div className="ask-user-options">
+                    {question.options.map((option, index) => (
+                      <button key={`${option.label}-${index}`} className="ask-user-option" onClick={() => answerQuestion(question.id, option.label)}>
+                        <strong>{option.label}</strong>
+                        {option.description && <small>{option.description}</small>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="ask-user-freeform">
+                  <span className="ask-user-or">或手动输入</span>
+                  <input
+                    autoFocus
+                    value={questionAnswers[question.id] ?? ""}
+                    placeholder="输入你的回答…"
+                    onChange={(e) => setQuestionAnswers((prev) => ({ ...prev, [question.id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(question.id, questionAnswers[question.id] ?? ""); }}
+                  />
+                  <button className="btn primary" disabled={!(questionAnswers[question.id] ?? "").trim()} onClick={() => answerQuestion(question.id, questionAnswers[question.id] ?? "")}>提交</button>
+                </div>
               </div>
-            )}
-            <div className="ask-user-freeform">
-              <span className="ask-user-or">或手动输入</span>
-              <input autoFocus value={customAnswer} placeholder="输入你的回答…" onChange={(e) => setCustomAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(customAnswer); }} />
-              <button className="btn primary" disabled={!customAnswer.trim()} onClick={() => answerQuestion(customAnswer)}>提交</button>
-            </div>
+            ))}
           </div>
         </div>
       )}

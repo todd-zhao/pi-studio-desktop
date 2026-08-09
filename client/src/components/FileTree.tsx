@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { listWorkspaceFiles } from "../api";
+import { listWorkspaceFiles, moveWorkspaceFile } from "../api";
 import type { FileEntry } from "../types";
+import { DirPicker } from "./DirPicker";
 
 interface DirState {
   loaded: boolean;
@@ -13,6 +14,7 @@ interface Props {
   onPickFile: (relPath: string, name: string) => void;
   onPreview?: (relPath: string, name: string) => void;
   onPickDir?: (relPath: string) => void;
+  rootPath?: string;
 }
 
 function fileIcon(name: string): string {
@@ -29,12 +31,14 @@ function fileIcon(name: string): string {
   return "📄";
 }
 
-function DirRow({ entry, depth, onPickFile, onPreview, onPickDir }: {
+function DirRow({ entry, depth, onPickFile, onPreview, onPickDir, onMoveFile, treeVersion }: {
   entry: FileEntry;
   depth: number;
   onPickFile: Props["onPickFile"];
   onPreview?: Props["onPreview"];
   onPickDir?: Props["onPickDir"];
+  onMoveFile?: (path: string) => void;
+  treeVersion: number;
 }) {
   const [state, setState] = useState<DirState>({ loaded: false, loading: false, entries: [], error: "" });
   const [open, setOpen] = useState(false);
@@ -89,7 +93,7 @@ function DirRow({ entry, depth, onPickFile, onPreview, onPickDir }: {
           )}
           {state.entries.map((e) =>
             e.isDir ? (
-              <DirRow key={e.path} entry={e} depth={depth + 1} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} />
+              <DirRow key={`${e.path}-${treeVersion}`} entry={e} depth={depth + 1} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} onMoveFile={onMoveFile} treeVersion={treeVersion} />
             ) : (
               <div
                 key={e.path}
@@ -114,6 +118,16 @@ function DirRow({ entry, depth, onPickFile, onPreview, onPickDir }: {
                 >
                   ＋
                 </button>
+                <button
+                  className="ft-move"
+                  title="移动文件"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onMoveFile?.(e.path);
+                  }}
+                >
+                  ↗
+                </button>
               </div>
             ),
           )}
@@ -123,25 +137,42 @@ function DirRow({ entry, depth, onPickFile, onPreview, onPickDir }: {
   );
 }
 
-export function FileTree({ onPickFile, onPreview, onPickDir }: Props) {
+export function FileTree({ onPickFile, onPreview, onPickDir, rootPath }: Props) {
   const [root, setRoot] = useState<DirState>({ loaded: false, loading: false, entries: [], error: "" });
+  const [treeVersion, setTreeVersion] = useState(0);
+  const [moving, setMoving] = useState<{ path: string; name: string } | null>(null);
+  const [moveError, setMoveError] = useState("");
 
   useEffect(() => {
     setRoot({ loaded: false, loading: true, entries: [], error: "" });
     listWorkspaceFiles("")
       .then((entries) => setRoot({ loaded: true, loading: false, entries, error: "" }))
       .catch((e) => setRoot({ loaded: true, loading: false, entries: [], error: (e as Error).message }));
-  }, []);
+  }, [treeVersion]);
+
+  const handleMove = async (destination: string) => {
+    if (!moving) return;
+    try {
+      await moveWorkspaceFile(moving.path, destination);
+      setMoveError("");
+      setTreeVersion((version) => version + 1);
+    } catch (error) {
+      setMoveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMoving(null);
+    }
+  };
 
   return (
     <div className="file-tree">
       <div className="ft-root">工作区根目录</div>
       {root.loading && <div className="ft-hint">加载中…</div>}
       {root.error && <div className="ft-hint err">⚠ {root.error}</div>}
+      {moveError && <div className="ft-hint err">⚠ {moveError}</div>}
       {root.loaded && root.entries.length === 0 && <div className="ft-hint">（空目录）</div>}
       {root.entries.map((e) =>
         e.isDir ? (
-          <DirRow key={e.path} entry={e} depth={0} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} />
+          <DirRow key={`${e.path}-${treeVersion}`} entry={e} depth={0} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} onMoveFile={(path) => setMoving({ path, name: path.split("/").pop() ?? path })} treeVersion={treeVersion} />
         ) : (
           <div
             key={e.path}
@@ -163,8 +194,26 @@ export function FileTree({ onPickFile, onPreview, onPickDir }: Props) {
             >
               ＋
             </button>
+            <button
+              className="ft-move"
+              title="移动文件"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setMoving({ path: e.path, name: e.name });
+              }}
+            >
+              ↗
+            </button>
           </div>
         ),
+      )}
+      {moving && (
+        <DirPicker
+          title="选择移动目标文件夹"
+          initialPath={rootPath}
+          onSelect={(destination) => void handleMove(destination)}
+          onClose={() => setMoving(null)}
+        />
       )}
     </div>
   );

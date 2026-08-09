@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync, createReadStream, unlinkSync } from "node:fs";
-import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, statSync, createReadStream, unlinkSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
@@ -92,6 +92,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 export interface BridgeOptions {
   cwd: string;
+  /** The app-level default workspace shown as 临时对话. */
+  defaultWorkspacePath?: string;
   mcpConfigPath?: string;
   /** Global pi config dir (defaults to ~/.pi/agent). */
   agentDir?: string;
@@ -134,6 +136,17 @@ interface RuntimeEntry {
   disposeFns: Array<() => void>;
 }
 
+interface ArchivedSession {
+  file: string;
+  name?: string;
+  createdAt?: number;
+  messageCount: number;
+  firstMessage?: string;
+  projectId?: string;
+  projectName?: string;
+  archivedAt: number;
+}
+
 interface BridgeEvents {
   state: [AppState];
   event: [unknown];
@@ -150,6 +163,7 @@ interface BridgeEvents {
 
 export class PiBridge extends EventEmitter<BridgeEvents> {
   private cwd: string;
+  private readonly defaultWorkspacePath: string;
   private readonly agentDir: string;
   private readonly loadGlobalExtensions: boolean;
   private readonly skillsDir: string;
@@ -169,9 +183,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private workspacesFile: string;
   private projectsFile: string;
   private projectIndexFile: string;
+  private archivedFile: string;
+  private readonly archivedSessions = new Map<string, ArchivedSession>();
   private projectIndex: Record<string, { text: string; indexedAt: number }> = {};
   private projects: Project[] = [];
   private customWorkspaces: string[] = [];
+  private lastWorkspacePath = "";
   private readonly agentsFile: string;
   private readonly hermesMemoryExtensionPath: string;
   private readonly subagentsExtensionPath: string;
@@ -186,6 +203,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   constructor(options: BridgeOptions) {
     super();
     this.cwd = options.cwd;
+    this.defaultWorkspacePath = options.defaultWorkspacePath ? resolve(options.defaultWorkspacePath) : resolve(this.cwd);
     this.mcpConfigPath = options.mcpConfigPath;
     this.agentDir = options.agentDir ?? getAgentDir();
     this.loadGlobalExtensions = options.loadGlobalExtensions ?? false;
@@ -205,8 +223,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ?? resolve(this.cwd, "..", "data", "workspaces.json");
     this.projectsFile = process.env.PI_STUDIO_PROJECTS_FILE ?? resolve(this.cwd, "..", "data", "projects.json");
     this.projectIndexFile = process.env.PI_STUDIO_PROJECT_INDEX_FILE ?? resolve(this.cwd, "..", "data", "project-index.json");
+    this.archivedFile = process.env.PI_STUDIO_ARCHIVED_FILE ?? resolve(this.cwd, "..", "data", "archived-sessions.json");
     this.loadWorkspaces();
     this.loadProjects();
+    this.loadArchivedSessions();
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -257,7 +277,17 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       name: "ask_user", label: "Ask user",
       description: "Ask a focused clarification question when the goal, scope, preference, or an irreversible choice is unclear. Prefer 2-5 concise options and allow freeform input.",
       parameters: Type.Object({ question: Type.String(), options: Type.Optional(Type.Array(Type.Object({ label: Type.String(), description: Type.Optional(Type.String()) }))), allowFreeform: Type.Optional(Type.Boolean()) }),
-      execute: async (_id: string, params: { question: string; options?: Array<{ label: string; description?: string }>; allowFreeform?: boolean }) => ({ content: [{ type: "text", text: await this.askUser(params.question, params.options ?? [], params.allowFreeform !== false) }] }),
+      execute: async (_id: string, params: { question: string; options?: Array<{ label: string; description?: string }>; allowFreeform?: boolean }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: any) => {
+        const sessionManager = ctx?.sessionManager;
+        const answer = await this.askUser(
+          params.question,
+          params.options ?? [],
+          params.allowFreeform !== false,
+          sessionManager?.getSessionId(),
+          sessionManager?.getSessionName(),
+        );
+        return { content: [{ type: "text", text: answer }] };
+      },
     });
     return async ({ cwd, sessionManager, sessionStartEvent }) => {
       startupLog("create-agent-session-services-start");
@@ -516,6 +546,33 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     await this.activeEntry().runtime.session.followUp(text);
   }
 
+  async cancelQueueItem(kind: "steer" | "followUp", text: string): Promise<void> {
+    const session = this.activeEntry().runtime.session;
+    const { steering, followUp } = session.clearQueue();
+    const keep = (items: readonly string[]) => items.filter((item) => item !== text);
+    for (const item of keep(steering)) await session.steer(item);
+    for (const item of keep(followUp)) await session.followUp(item);
+  }
+
+  async editQueueItem(kind: "steer" | "followUp", oldText: string, newText: string): Promise<void> {
+    const text = newText.trim();
+    if (!text) throw new Error("修改后的消息不能为空");
+    const session = this.activeEntry().runtime.session;
+    const { steering, followUp } = session.clearQueue();
+    let replaced = false;
+    const replaceFirst = (items: readonly string[]) => items.map((item) => {
+      if (!replaced && item === oldText) {
+        replaced = true;
+        return text;
+      }
+      return item;
+    });
+    const nextSteering = kind === "steer" ? replaceFirst(steering) : steering.filter((item) => item !== oldText);
+    const nextFollowUp = kind === "followUp" ? replaceFirst(followUp) : followUp.filter((item) => item !== oldText);
+    for (const item of nextSteering) await session.steer(item);
+    for (const item of nextFollowUp) await session.followUp(item);
+  }
+
   async abort(): Promise<void> {
     await this.activeEntry().runtime.session.abort();
   }
@@ -588,22 +645,133 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     return { activeFile: this.activeEntry().runtime.session.sessionFile };
   }
 
+  async archiveSession(file: string): Promise<{ activeFile?: string }> {
+    const target = resolve(file);
+    const infos = await SessionManager.list(this.cwd);
+    const info = infos.find((item) => resolve(item.path) === target);
+    if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
+    if (this.archivedSessions.has(target)) throw new Error("对话已归档");
+
+    const project = this.projectForSessionFile(target);
+    this.archivedSessions.set(target, {
+      file: target,
+      name: info.name,
+      createdAt: info.created.getTime(),
+      messageCount: info.messageCount,
+      firstMessage: info.firstMessage,
+      projectId: project?.id,
+      projectName: project?.name,
+      archivedAt: Date.now(),
+    });
+    this.saveArchivedSessions();
+
+    if (project) {
+      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
+      project.updatedAt = Date.now();
+      this.saveProjects();
+    }
+
+    const runtime = this.findRuntimeByFile(target);
+    let replacement: RuntimeEntry | undefined;
+    if (runtime?.id === this.activeRuntimeId) {
+      if (this.runtimes.size > 1) {
+        replacement = [...this.runtimes.values()].find((entry) => entry.id !== runtime.id);
+      } else {
+        const sessionDir = runtime.runtime.session.sessionManager.getSessionDir();
+        replacement = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
+        this.runtimes.set(replacement.id, replacement);
+      }
+      if (!replacement) throw new Error("Unable to select a replacement session");
+      this.activeRuntimeId = replacement.id;
+    }
+
+    if (runtime) {
+      this.runtimes.delete(runtime.id);
+      this.promptQueues.delete(runtime.id);
+      this.longTasks.delete(runtime.id);
+      for (const fn of runtime.disposeFns) fn();
+      runtime.disposeFns = [];
+      try { await runtime.runtime.dispose(); } catch { /* ignore */ }
+    }
+
+    if (project) await this.reloadProjectRuntimes(project.id);
+    this.pushState();
+    await this.emitSessions();
+    return { activeFile: this.activeEntry().runtime.session.sessionFile };
+  }
+
+  async restoreSession(file: string): Promise<void> {
+    const target = resolve(file);
+    const archived = this.archivedSessions.get(target);
+    if (!archived) throw new Error("对话不在归档中");
+    this.archivedSessions.delete(target);
+    this.saveArchivedSessions();
+
+    const project = this.projects.find((item) => item.id === archived.projectId);
+    if (project && !project.sessionFiles.some((item) => resolve(item) === target)) {
+      project.sessionFiles.push(target);
+      project.updatedAt = Date.now();
+      this.saveProjects();
+      await this.reloadProjectRuntimes(project.id);
+    }
+    this.pushState();
+    await this.emitSessions();
+  }
+
+  async deleteArchivedSession(file: string): Promise<{ activeFile?: string }> {
+    const target = resolve(file);
+    if (!this.archivedSessions.has(target)) throw new Error("对话不在归档中");
+    const result = await this.deleteSession(target);
+    this.archivedSessions.delete(target);
+    this.saveArchivedSessions();
+    return result;
+  }
+
+  listArchivedSessions(): ArchivedSession[] {
+    return [...this.archivedSessions.values()]
+      .filter((session) => existsSync(session.file))
+      .sort((a, b) => b.archivedAt - a.archivedAt)
+      .map((session) => ({ ...session }));
+  }
+
   async listSessions(): Promise<SessionMeta[]> {
     const infos = await SessionManager.list(this.cwd);
-    return infos.map((i) => ({
-      id: i.id,
-      file: i.path,
-      name: i.name,
-      createdAt: i.created.getTime(),
-      messageCount: i.messageCount,
-      firstMessage: i.firstMessage,
-      ...(this.projectForSessionFile(i.path)
-        ? {
-            projectId: this.projectForSessionFile(i.path)?.id,
-            projectName: this.projectForSessionFile(i.path)?.name,
-          }
-        : {}),
-    }));
+    return infos
+      .filter((info) => !this.archivedSessions.has(resolve(info.path)))
+      .map((i) => ({
+        id: i.id,
+        file: i.path,
+        name: i.name,
+        createdAt: i.created.getTime(),
+        messageCount: i.messageCount,
+        firstMessage: i.firstMessage,
+        ...(this.projectForSessionFile(i.path)
+          ? {
+              projectId: this.projectForSessionFile(i.path)?.id,
+              projectName: this.projectForSessionFile(i.path)?.name,
+            }
+          : {}),
+      }));
+  }
+
+  private loadArchivedSessions(): void {
+    try {
+      const data = JSON.parse(readFileSync(this.archivedFile, "utf8")) as { sessions?: ArchivedSession[] };
+      for (const session of data.sessions ?? []) {
+        if (session?.file) this.archivedSessions.set(resolve(session.file), session);
+      }
+    } catch {
+      /* start empty when the archive file does not exist yet */
+    }
+  }
+
+  private saveArchivedSessions(): void {
+    mkdirSync(dirname(this.archivedFile), { recursive: true });
+    writeFileSync(
+      this.archivedFile,
+      JSON.stringify({ sessions: [...this.archivedSessions.values()] }, null, 2),
+      "utf8",
+    );
   }
 
   private async emitSessions(): Promise<void> {
@@ -703,13 +871,19 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     return { question: text || "请选择：", options: parsed.slice(0, 5) };
   }
 
-  private askUser(question: string, options: Array<{ label: string; description?: string }>, allowFreeform: boolean): Promise<string> {
+  private askUser(
+    question: string,
+    options: Array<{ label: string; description?: string }>,
+    allowFreeform: boolean,
+    sessionId?: string,
+    sessionName?: string,
+  ): Promise<string> {
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const normalized = this.normalizeAskUserQuestion(question, options);
     return new Promise((resolve) => {
       const timer = setTimeout(() => { this.pendingQuestions.delete(id); resolve("No answer received; ask again or use a safe explicit assumption."); }, 10 * 60_000);
       this.pendingQuestions.set(id, { resolve, timer });
-      this.emit("ask_user", { id, question: normalized.question.slice(0, 1200), options: normalized.options, allowFreeform });
+      this.emit("ask_user", { id, sessionId, sessionName, question: normalized.question.slice(0, 1200), options: normalized.options, allowFreeform });
     });
   }
 
@@ -1156,8 +1330,9 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private loadWorkspaces(): void {
     try {
       if (existsSync(this.workspacesFile)) {
-        const data = JSON.parse(readFileSync(this.workspacesFile, "utf8")) as { paths?: string[] };
+        const data = JSON.parse(readFileSync(this.workspacesFile, "utf8")) as { paths?: string[]; active?: string };
         this.customWorkspaces = Array.isArray(data.paths) ? data.paths : [];
+        this.lastWorkspacePath = typeof data.active === "string" ? data.active : "";
       }
     } catch {
       this.customWorkspaces = [];
@@ -1167,7 +1342,11 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private saveWorkspaces(): void {
     try {
       mkdirSync(resolve(this.workspacesFile, ".."), { recursive: true });
-      writeFileSync(this.workspacesFile, JSON.stringify({ paths: this.customWorkspaces }, null, 2), "utf8");
+      writeFileSync(
+        this.workspacesFile,
+        JSON.stringify({ paths: this.customWorkspaces, active: this.lastWorkspacePath || this.cwd }, null, 2),
+        "utf8",
+      );
     } catch {
       /* ignore */
     }
@@ -1182,7 +1361,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       seen.add(abs);
       out.push({
         path: abs,
-        name: basename(abs) || abs,
+        name: abs === resolve(this.defaultWorkspacePath) ? "临时对话" : basename(abs) || abs,
         current: abs === resolve(this.cwd),
       });
     };
@@ -1216,6 +1395,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
     this.cwd = abs;
     if (!this.customWorkspaces.includes(abs)) this.customWorkspaces.push(abs);
+    this.lastWorkspacePath = abs;
     this.saveWorkspaces();
 
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
@@ -1263,6 +1443,40 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   /** Read a workspace file for preview: text head (≤1MB) or full image (≤8MB). */
+  moveWorkspaceFile(sourceRelPath: string, destinationDir: string): void {
+    const root = resolve(this.cwd);
+    const sourceAbs = this.resolveWorkspacePath(sourceRelPath);
+    const destAbs = resolve(destinationDir);
+    if (destAbs !== root && !destAbs.startsWith(root + sep)) throw new Error("目标文件夹不在当前工作区");
+    if (!existsSync(destAbs) || !statSync(destAbs).isDirectory()) throw new Error("目标文件夹不存在");
+    if (!existsSync(sourceAbs)) throw new Error("源文件不存在");
+    if (resolve(dirname(sourceAbs)) === destAbs) return;
+
+    const movedAbs = join(destAbs, basename(sourceAbs));
+    if (existsSync(movedAbs)) throw new Error("目标位置已存在同名文件或文件夹");
+    renameSync(sourceAbs, movedAbs);
+
+    let changed = false;
+    for (const project of this.projects) {
+      let projectChanged = false;
+      for (const document of project.documents) {
+        const docAbs = resolve(document.path);
+        if (docAbs === sourceAbs) {
+          document.path = movedAbs;
+          projectChanged = true;
+        } else if (docAbs.startsWith(sourceAbs + sep)) {
+          document.path = join(movedAbs, relative(sourceAbs, docAbs));
+          projectChanged = true;
+        }
+      }
+      if (projectChanged) {
+        project.updatedAt = Date.now();
+        changed = true;
+      }
+    }
+    if (changed) this.saveProjects();
+  }
+
   async readWorkspaceFile(relPath: string): Promise<WorkspaceFileContent> {
     const abs = this.resolveWorkspacePath(relPath);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${relPath}`);
@@ -1511,7 +1725,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     // (process-local overlay) and refresh the provider snapshot.
     await this.appCredentials.modify(providerId, async () => ({ type: "api_key", key }));
     await withTimeout(
-      this.modelRuntime.setRuntimeApiKey(providerId, key, { allowNetwork: false }),
+      this.modelRuntime.setRuntimeApiKey(providerId, key),
       15_000,
       "保存 API Key 超时",
     );

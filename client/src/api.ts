@@ -1,4 +1,4 @@
-import type { AgentProfile, AppState, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, Project, ProjectDocument, ProjectMemory, ProjectMemoryType, ProjectSummary, ProjectSearchResult, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
+import type { AgentProfile, AppState, ArchivedSession, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, Project, ProjectDocument, ProjectMemory, ProjectMemoryType, ProjectSummary, ProjectSearchResult, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
 import type { ScheduledTask } from "./types";
 
 let authToken = "";
@@ -144,6 +144,34 @@ export async function deleteSession(file: string): Promise<{ ok: boolean; active
   });
 }
 
+export async function listArchivedSessions(): Promise<ArchivedSession[]> {
+  return json<ArchivedSession[]>("/api/archived-sessions");
+}
+
+export async function archiveSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
+  return json<{ ok: boolean; activeFile?: string }>("/api/sessions/archive", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
+export async function restoreSession(file: string): Promise<{ ok: boolean }> {
+  return json<{ ok: boolean }>("/api/sessions/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
+export async function deleteArchivedSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
+  return json<{ ok: boolean; activeFile?: string }>("/api/archived-sessions", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file }),
+  });
+}
+
 // ------------------------------------------------------------ projects
 
 export async function listProjects(): Promise<ProjectSummary[]> {
@@ -283,6 +311,14 @@ export async function listWorkspaceFiles(path: string): Promise<FileEntry[]> {
   const q = new URLSearchParams({ path });
   const r = await json<{ entries: FileEntry[] }>(`/api/workspace/files?${q}`);
   return r.entries;
+}
+
+export async function moveWorkspaceFile(source: string, destination: string): Promise<{ ok: boolean }> {
+  return json<{ ok: boolean }>("/api/workspace/files/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, destination }),
+  });
 }
 
 export async function readWorkspaceFile(path: string): Promise<WorkspaceFileContent> {
