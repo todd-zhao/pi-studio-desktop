@@ -89,6 +89,8 @@ export default function App() {
   const [rightPanelWidth, setRightPanelWidth] = useState(() => storedPaneWidth("pi-studio-right-panel-width", 380, 280, 600));
   const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [openTabFiles, setOpenTabFiles] = useState<string[]>([]);
+  const openTabsInitializedRef = useRef(false);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {
       const urlTheme = new URLSearchParams(location.search).get("theme");
@@ -436,9 +438,22 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (openTabsInitializedRef.current || sessions.length === 0) return;
+    openTabsInitializedRef.current = true;
+    setOpenTabFiles(sessions.slice(0, 8).map((session) => session.file));
+  }, [sessions]);
+
+  useEffect(() => {
+    const file = state?.sessionFile;
+    if (!file) return;
+    setOpenTabFiles((prev) => (prev.includes(file) ? prev : [...prev, file]));
+  }, [state?.sessionFile]);
+
   const handleDeleteSession = useCallback(async (file: string) => {
     try {
       const result = await deleteSessionApi(file);
+      setOpenTabFiles((prev) => prev.filter((f) => f !== file));
       await refreshSessions();
       setProjects(await listProjects());
       if (result.activeFile && result.activeFile !== state?.sessionFile) {
@@ -538,6 +553,7 @@ export default function App() {
 
   const switchSession = useCallback((file: string) => {
     socketRef.current?.send({ type: "switch_session", file });
+    setOpenTabFiles((prev) => (prev.includes(file) ? prev : [...prev, file]));
     setPanel(null);
   }, []);
 
@@ -554,6 +570,15 @@ export default function App() {
   const newSession = useCallback(() => {
     socketRef.current?.send({ type: "new_session" });
   }, []);
+
+  const closeTab = useCallback((file: string) => {
+    const next = openTabFiles.filter((f) => f !== file);
+    setOpenTabFiles(next);
+    if (state?.sessionFile !== file) return;
+    const fallback = next[0] ?? sessions.find((s) => s.file !== file)?.file;
+    if (fallback) switchSession(fallback);
+    else newSession();
+  }, [openTabFiles, sessions, state?.sessionFile, switchSession, newSession]);
 
   const switchWorkspace = useCallback((path: string) => {
     socketRef.current?.send({ type: "switch_workspace", path });
@@ -685,7 +710,9 @@ export default function App() {
           </span>
         </div>
         <div className="session-tabs" role="tablist" aria-label="打开的会话">
-          {sessions.slice(0, 8).map((session) => {
+          {openTabFiles.map((file) => {
+            const session = sessions.find((s) => s.file === file);
+            if (!session) return null;
             const active = state?.sessionFile === session.file;
             return (
               <button
@@ -698,6 +725,17 @@ export default function App() {
               >
                 <span className="session-tab-name">{session.name || session.firstMessage || "新会话"}</span>
                 <span className="session-tab-count">{session.messageCount}</span>
+                <span
+                  role="button"
+                  className="session-tab-close"
+                  title="关闭标签页"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeTab(session.file);
+                  }}
+                >
+                  ×
+                </span>
               </button>
             );
           })}
