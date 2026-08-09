@@ -24,6 +24,7 @@ import type { McpConfig } from "pi-mcp-adapter/types";
 import type { McpStatusSnapshot } from "./types.ts";
 import type { WechatCommandAction } from "./types.ts";
 import { wechatExtension } from "./extensions/wechat.ts";
+import { AppCredentialStore } from "./credential-store.ts";
 import { decodeTextBuffer, repairUploadedFilename } from "./textEncoding.ts";
 import type {
   AppState,
@@ -156,6 +157,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   private modelRuntime!: ModelRuntime;
   private settingsManager!: SettingsManager;
+  private appCredentials!: AppCredentialStore;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly promptQueues = new Map<string, Promise<void>>();
   private readonly longTasks = new Map<string, LongTask[]>();
@@ -211,7 +213,15 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   async start(): Promise<void> {
     startupLog("model-runtime-create-start");
-    this.modelRuntime = await ModelRuntime.create();
+    // Keep model catalog and credentials tied to the app-local agent directory.
+    // Credentials live in an app-owned store (memory + auth.json kept in sync)
+    // so save/clear take effect immediately and survive restarts; runtime API
+    // key overrides stay process-local on top of that store.
+    this.appCredentials = new AppCredentialStore(join(this.agentDir, "auth.json"));
+    this.modelRuntime = await ModelRuntime.create({
+      credentials: this.appCredentials,
+      modelsPath: join(this.agentDir, "models.json"),
+    });
     startupLog("model-runtime-create-done");
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
     this.eventBus = createEventBus();
@@ -649,12 +659,54 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.pushState();
   }
 
+  private normalizeAskUserQuestion(
+    question: string,
+    options: Array<{ label: string; description?: string }>,
+  ): { question: string; options: Array<{ label: string; description?: string }> } {
+    if (options.length > 0) return { question, options: options.slice(0, 5) };
+
+    const lines = question.split("\n");
+    const kept: string[] = [];
+    const parsed: Array<{ label: string; description?: string }> = [];
+    for (const rawLine of lines) {
+      const match = rawLine.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+)$/);
+      if (!match) {
+        kept.push(rawLine);
+        continue;
+      }
+      const item = match[1].trim();
+      const bold = item.match(/^\*\*(.+?)\*\*\s*(?::|：|[-—–]|\s+-\s+)?\s*(.*)$/);
+      let label = item;
+      let description: string | undefined;
+      if (bold && bold[1]) {
+        label = bold[1].trim();
+        description = bold[2]?.trim() || undefined;
+      } else {
+        const separated = item.match(/^([^:：—–-]{1,80}?)\s*(?::|：|—|–)\s+(.+)$/);
+        if (separated) {
+          label = separated[1].trim();
+          description = separated[2].trim();
+        } else if (item.includes(" - ")) {
+          const pieces = item.split(" - ");
+          label = pieces[0].trim();
+          description = pieces.slice(1).join(" - ").trim() || undefined;
+        }
+      }
+      if (label) parsed.push(description ? { label, description } : { label });
+    }
+
+    if (parsed.length === 0) return { question, options };
+    const text = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    return { question: text || "请选择：", options: parsed.slice(0, 5) };
+  }
+
   private askUser(question: string, options: Array<{ label: string; description?: string }>, allowFreeform: boolean): Promise<string> {
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const normalized = this.normalizeAskUserQuestion(question, options);
     return new Promise((resolve) => {
       const timer = setTimeout(() => { this.pendingQuestions.delete(id); resolve("No answer received; ask again or use a safe explicit assumption."); }, 10 * 60_000);
       this.pendingQuestions.set(id, { resolve, timer });
-      this.emit("ask_user", { id, question: question.slice(0, 1200), options: options.slice(0, 5), allowFreeform });
+      this.emit("ask_user", { id, question: normalized.question.slice(0, 1200), options: normalized.options, allowFreeform });
     });
   }
 
@@ -1448,8 +1500,15 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
+    const providerId = provider.trim();
+    const key = apiKey.trim();
+    if (!providerId || !key) throw new Error("需要 provider 和 apiKey");
+    // Persist through the app-owned store first so the key survives even if
+    // the in-process refresh below fails, then activate it in the runtime
+    // (process-local overlay) and refresh the provider snapshot.
+    await this.appCredentials.modify(providerId, async () => ({ type: "api_key", key }));
     await withTimeout(
-      this.modelRuntime.setRuntimeApiKey(provider, apiKey, { allowNetwork: false }),
+      this.modelRuntime.setRuntimeApiKey(providerId, key, { allowNetwork: false }),
       15_000,
       "保存 API Key 超时",
     );
@@ -1457,11 +1516,34 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async removeProviderApiKey(provider: string): Promise<void> {
-    await withTimeout(
-      this.modelRuntime.removeRuntimeApiKey(provider),
-      15_000,
-      "清除 API Key 超时",
-    );
+    const providerId = provider.trim();
+    // Clear the process-local runtime overlay first. Its internal refresh is
+    // network-bound (allowNetwork defaults to true), so a slow or failed
+    // availability check must not block the authoritative cleanup below.
+    try {
+      await withTimeout(
+        this.modelRuntime.removeRuntimeApiKey(providerId),
+        15_000,
+        "清除 API Key 超时",
+      );
+    } catch (error) {
+      this.emit("log", "warn", `清除 API Key 时刷新失败（继续清理）: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Remove from the app-owned store (memory + auth.json), then force a
+    // network-free refresh so storedProviders immediately matches the file.
+    // Without it, the Models panel keeps reporting the provider as
+    // configured until the app restarts.
+    await this.appCredentials.delete(providerId);
+    try {
+      await withTimeout(
+        this.modelRuntime.refresh({ allowNetwork: false }),
+        15_000,
+        "清除后刷新模型状态超时",
+      );
+    } catch (error) {
+      this.emit("log", "warn", `清除 API Key 后刷新模型状态失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.updateAvailableModels();
     this.pushState();
   }
 

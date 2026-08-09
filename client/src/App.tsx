@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { LongTaskQueue } from "./components/LongTaskQueue";
+import { Markdown } from "./components/markdown";
 const McpPanel = lazy(() => import("./components/McpPanel").then((module) => ({ default: module.McpPanel })));
 const ModelsPanel = lazy(() => import("./components/ModelsPanel").then((module) => ({ default: module.ModelsPanel })));
 const SkillsPanel = lazy(() => import("./components/SkillsPanel").then((module) => ({ default: module.SkillsPanel })));
@@ -773,11 +774,22 @@ export default function App() {
         <div className="ask-user-backdrop" role="dialog" aria-modal="true" aria-label="Agent 澄清问题">
           <div className="ask-user-card">
             <div className="ask-user-kicker">Agent 需要确认</div>
-            <h2>{question.question}</h2>
-            <div className="ask-user-options">
-              {question.options.map((option) => <button key={option.label} className="ask-user-option" onClick={() => answerQuestion(option.label)}><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</button>)}
+            <div className="ask-user-question"><Markdown text={question.question} /></div>
+            {question.options.length > 0 && (
+              <div className="ask-user-options">
+                {question.options.map((option, index) => (
+                  <button key={`${option.label}-${index}`} className="ask-user-option" onClick={() => answerQuestion(option.label)}>
+                    <strong>{option.label}</strong>
+                    {option.description && <small>{option.description}</small>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="ask-user-freeform">
+              <span className="ask-user-or">或手动输入</span>
+              <input autoFocus value={customAnswer} placeholder="输入你的回答…" onChange={(e) => setCustomAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(customAnswer); }} />
+              <button className="btn primary" disabled={!customAnswer.trim()} onClick={() => answerQuestion(customAnswer)}>提交</button>
             </div>
-            {question.allowFreeform && <div className="ask-user-freeform"><input autoFocus value={customAnswer} placeholder="输入你的想法…" onChange={(e) => setCustomAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(customAnswer); }} /><button className="btn primary" disabled={!customAnswer.trim()} onClick={() => answerQuestion(customAnswer)}>提交</button></div>}
           </div>
         </div>
       )}

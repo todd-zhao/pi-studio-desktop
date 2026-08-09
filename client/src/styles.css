@@ -3126,11 +3126,17 @@ body {
 .ask-user-card { width: min(560px, 100%); padding: 24px; border: 1px solid var(--border-2); border-radius: 16px; background: var(--bg-2); box-shadow: 0 24px 80px rgba(0,0,0,.35); }
 .ask-user-kicker { color: var(--text-3); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ask-user-card h2 { margin: 8px 0 18px; font-size: 18px; line-height: 1.45; }
+.ask-user-question { margin: 8px 0 18px; color: var(--text); font-size: 15px; line-height: 1.55; max-height: 40vh; overflow: auto; }
+.ask-user-question .md > :first-child { margin-top: 0; }
+.ask-user-question .md > :last-child { margin-bottom: 0; }
+.ask-user-question .md p { margin: 6px 0; }
+.ask-user-question .md li { margin: 2px 0; }
 .ask-user-options { display: grid; gap: 9px; }
 .ask-user-option { display: grid; gap: 4px; width: 100%; padding: 13px 14px; text-align: left; color: var(--text); background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 10px; cursor: pointer; }
 .ask-user-option:hover { border-color: var(--accent); background: var(--solid-hover); }
 .ask-user-option small { color: var(--text-3); }
-.ask-user-freeform { display: flex; gap: 8px; margin-top: 14px; }
+.ask-user-freeform { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ask-user-or { flex: 0 0 auto; color: var(--text-3); font-size: 12px; white-space: nowrap; }
 .ask-user-freeform input { flex: 1; min-width: 0; padding: 10px 12px; color: var(--text); background: var(--bg); border: 1px solid var(--border-2); border-radius: 9px; }
 .schedules-panel { padding: 16px; }
 .schedules-panel .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
