@@ -129,6 +129,12 @@ function requestToken(req: { headers: Record<string, unknown>; url?: string }): 
   }
 }
 
+function previewCookieToken(cookieHeader: string | undefined): string {
+  if (!cookieHeader) return "";
+  const match = cookieHeader.match(/(?:^|;\s*)pi_preview_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 function allowedOrigin(origin: string | undefined): boolean {
   return !origin || ALLOWED_ORIGINS.has(origin);
 }
@@ -153,7 +159,10 @@ app.use("/api", (req, res, next) => {
     res.status(403).json({ error: "不允许的请求来源" });
     return;
   }
-  if (AUTH_TOKEN && !safeEqual(requestToken(req), AUTH_TOKEN)) {
+  const cookieToken = req.path.startsWith("/api/workspace/preview/") ? previewCookieToken(req.headers.cookie) : "";
+  const authorized = safeEqual(requestToken(req), AUTH_TOKEN) ||
+    (cookieToken !== "" && safeEqual(cookieToken, AUTH_TOKEN));
+  if (AUTH_TOKEN && !authorized) {
     res.status(401).json({ error: "未授权" });
     return;
   }
@@ -383,6 +392,29 @@ app.get("/api/workspace/file", async (req, res) => {
     const path = String(req.query.path ?? "");
     if (!path) throw new Error("缺少 path");
     res.json(await bridge.readWorkspaceFile(path));
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+// Path-based HTML preview so relative CSS/JS/images inside the document resolve
+// to sibling files under the current workspace.
+app.get("/api/workspace/preview/*", (req, res) => {
+  try {
+    const rel = String((req.params as Record<string, string>)["0"] ?? "");
+    if (!rel) throw new Error("缺少 path");
+    const abs = bridge.resolveWorkspacePath(rel.split("/").map((segment) => decodeURIComponent(segment)).join("/"));
+    if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${rel}`);
+    const token = requestToken(req);
+    if (AUTH_TOKEN && token) {
+      res.cookie("pi_preview_token", token, {
+        httpOnly: true,
+        sameSite: "strict",
+        path: "/api/workspace/preview",
+        maxAge: 60 * 60 * 1000,
+      });
+    }
+    res.sendFile(abs, { headers: { "Content-Disposition": "inline" } });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }

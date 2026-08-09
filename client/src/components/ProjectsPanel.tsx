@@ -34,6 +34,8 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   const [project, setProject] = useState<Project | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [memory, setMemory] = useState<{ content: string; type: ProjectMemoryType; pinned: boolean }>({ content: "", type: "fact", pinned: false });
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editingMemory, setEditingMemory] = useState<{ content: string; type: ProjectMemoryType; pinned: boolean }>({ content: "", type: "fact", pinned: false });
   const [documentPath, setDocumentPath] = useState("");
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchResult[]>([]);
@@ -140,6 +142,27 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
       setMemory({ content: "", type: "fact", pinned: false });
       await refreshProjects(project.id);
       onToast("ok", "项目记忆已保存");
+    } catch (error) {
+      onToast("error", (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEditMemory = (item: { id: string; content: string; type: ProjectMemoryType; pinned: boolean }) => {
+    setEditingMemoryId(item.id);
+    setEditingMemory({ content: item.content, type: item.type, pinned: item.pinned });
+  };
+
+  const saveMemoryEdit = async () => {
+    if (!project || !editingMemoryId || !editingMemory.content.trim()) return;
+    setBusy(true);
+    try {
+      await saveProjectMemory(project.id, { id: editingMemoryId, ...editingMemory });
+      setEditingMemoryId(null);
+      setEditingMemory({ content: "", type: "fact", pinned: false });
+      await refreshProjects(project.id);
+      onToast("ok", "项目记忆已更新");
     } catch (error) {
       onToast("error", (error as Error).message);
     } finally {
@@ -266,7 +289,23 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
           <div className="agent-list">
             {project.memories.map((item) => (
               <div className="agent-item" key={item.id}>
-                <div className="agent-row"><div><div className="agent-name">{item.pinned ? "置顶 · " : ""}{item.type}</div><div className="agent-description">{item.content}</div></div><div className="agent-actions"><button className="mini-btn danger" disabled={busy} onClick={() => void removeProjectMemory(project.id, item.id).then(() => refreshProjects(project.id)).catch((error) => onToast("error", (error as Error).message))}>删除</button></div></div>
+                {editingMemoryId === item.id ? (
+                  <div className="agent-row memory-edit">
+                    <div className="grow">
+                      <textarea className="grow" rows={3} value={editingMemory.content} onChange={(event) => setEditingMemory({ ...editingMemory, content: event.target.value })} />
+                      <div className="form-row" style={{ marginTop: 6 }}>
+                        <select value={editingMemory.type} onChange={(event) => setEditingMemory({ ...editingMemory, type: event.target.value as ProjectMemoryType })}>{memoryTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+                        <label className="checkbox-label"><input type="checkbox" checked={editingMemory.pinned} onChange={(event) => setEditingMemory({ ...editingMemory, pinned: event.target.checked })} />置顶</label>
+                      </div>
+                    </div>
+                    <div className="agent-actions">
+                      <button className="mini-btn primary" disabled={busy || !editingMemory.content.trim()} onClick={() => void saveMemoryEdit()}>保存</button>
+                      <button className="mini-btn" disabled={busy} onClick={() => setEditingMemoryId(null)}>取消</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="agent-row"><div><div className="agent-name">{item.pinned ? "置顶 · " : ""}{item.type}</div><div className="agent-description">{item.content}</div></div><div className="agent-actions"><button className="mini-btn" disabled={busy} onClick={() => startEditMemory(item)}>编辑</button><button className="mini-btn danger" disabled={busy} onClick={() => void removeProjectMemory(project.id, item.id).then(() => refreshProjects(project.id)).catch((error) => onToast("error", (error as Error).message))}>删除</button></div></div>
+                )}
               </div>
             ))}
           </div>

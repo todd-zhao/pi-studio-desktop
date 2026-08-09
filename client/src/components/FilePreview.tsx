@@ -131,6 +131,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
   const isMarkdown = !!data && !data.isBinary && (data.mime === "text/markdown" || ext === "md" || ext === "markdown");
   const isCsv = ext === "csv" && !!data && !data.isBinary;
   const rawUrl = data ? authenticatedUrl(`/api/workspace/file/raw?path=${encodeURIComponent(data.path)}`) : "";
+  const htmlUrl = isHtml && data ? authenticatedUrl(`/api/workspace/preview/${data.path.split("/").map(encodeURIComponent).join("/")}`) : "";
   const imgSrc = data?.content ?? (isImage ? rawUrl : undefined);
   const csv = isCsv ? csvRows(data?.content ?? "") : [];
 
@@ -161,7 +162,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
           </div>
         )}
         {isPdf && <iframe className="preview-pdf" src={rawUrl} title={file.name} />}
-        {isHtml && rawUrl && <iframe className="preview-html" src={rawUrl} sandbox="allow-scripts" referrerPolicy="no-referrer" title={file.name} />}
+        {isHtml && htmlUrl && <iframe className="preview-html" src={htmlUrl} sandbox="allow-scripts allow-same-origin allow-popups" referrerPolicy="no-referrer" title={file.name} />}
         {isImage && (
           <div className="preview-img">
             <img src={imgSrc} alt={file.name} />
