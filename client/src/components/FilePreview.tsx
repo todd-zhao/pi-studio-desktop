@@ -126,6 +126,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
   };
 
   const isPdf = ext === "pdf" || data?.mime === "application/pdf";
+  const isHtml = ext === "html" || ext === "htm";
   const isImage = !!data && !data.isBinary && data.mime.startsWith("image/");
   const isMarkdown = !!data && !data.isBinary && (data.mime === "text/markdown" || ext === "md" || ext === "markdown");
   const isCsv = ext === "csv" && !!data && !data.isBinary;
@@ -160,6 +161,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
           </div>
         )}
         {isPdf && <iframe className="preview-pdf" src={rawUrl} title={file.name} />}
+        {isHtml && rawUrl && <iframe className="preview-html" src={rawUrl} sandbox="allow-scripts" referrerPolicy="no-referrer" title={file.name} />}
         {isImage && (
           <div className="preview-img">
             <img src={imgSrc} alt={file.name} />
@@ -182,7 +184,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
             </div>
           ))}
         {isCsv && <DataTable rows={csv} />}
-        {!isDoc && !isPdf && data && !data.isBinary && !isImage && !isMarkdown && !isCsv && (
+        {!isDoc && !isPdf && !isHtml && data && !data.isBinary && !isImage && !isMarkdown && !isCsv && (
           <pre className="preview-code">{data.content}</pre>
         )}
         {!isDoc && !isPdf && data && data.isBinary && (

@@ -826,17 +826,11 @@ export default function App() {
         </div>
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>
-      <Suspense fallback={panel || preview ? <div className="right-panel panel-loading">加载面板中…</div> : null}>
-      {(panel || preview) && (
-        <div
-          className="pane-resizer right-panel-resizer"
-          role="separator"
-          aria-label="调整右侧面板宽度"
-          aria-orientation="vertical"
-          onPointerDown={(event) => startResize("right", event)}
-          title="拖动调整右侧面板宽度"
-        />
-      )}
+      <Suspense fallback={preview ? <div className="right-panel panel-loading">加载面板中…</div> : null}>
+      {panel && (
+        <div className="config-modal-backdrop" onClick={() => setPanel(null)}>
+          <div className="modal config-modal" onClick={(e) => e.stopPropagation()}>
+            <Suspense fallback={<div className="panel-loading">加载面板中…</div>}>
       {panel === "mcp" && (
         <div className="right-panel">
           <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />
@@ -901,6 +895,10 @@ export default function App() {
             onDelete={(file) => void handleDeleteArchived(file)}
             onClose={() => setPanel(null)}
           />
+        </div>
+      )}
+            </Suspense>
+          </div>
         </div>
       )}
       {preview && (

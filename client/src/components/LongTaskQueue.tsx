@@ -18,13 +18,13 @@ export function LongTaskQueue({ tasks, onCancel, onClear }: Props) {
   if (tasks.length === 0) return null;
   const hasFinished = tasks.some((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled");
   return (
-    <section className="long-task-queue" aria-label="\u957f\u65f6\u4efb\u52a1">
+    <section className="long-task-queue" aria-label="长时任务">
       <div className="long-task-queue-head">
         <div>
-          <strong>\u957f\u65f6\u4efb\u52a1</strong>
-          <span>{tasks.length} \u4e2a</span>
+          <strong>长时任务</strong>
+          <span>{tasks.length} 个</span>
         </div>
-        {hasFinished && <button className="text-btn" onClick={onClear}>\u6e05\u7406\u5df2\u7ed3\u675f</button>}
+        {hasFinished && <button className="text-btn" onClick={onClear}>清理已结束</button>}
       </div>
       <div className="long-task-list">
         {tasks.map((task) => (
@@ -34,10 +34,10 @@ export function LongTaskQueue({ tasks, onCancel, onClear }: Props) {
               <div className="long-task-title" title={task.text}>{task.text}</div>
               <div className="long-task-meta">
                 <span>{statusLabels[task.status]}</span>
-                {task.error && <span title={task.error}>\u6267\u884c\u5931\u8d25</span>}
+                {task.error && <span title={task.error}>执行失败</span>}
               </div>
             </div>
-            {task.status === "queued" && <button className="text-btn danger" onClick={() => onCancel(task.id)}>\u53d6\u6d88</button>}
+            {task.status === "queued" && <button className="text-btn danger" onClick={() => onCancel(task.id)}>取消</button>}
           </div>
         ))}
       </div>
