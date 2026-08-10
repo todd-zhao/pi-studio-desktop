@@ -4,7 +4,7 @@ import type { ParsedDoc, WorkspaceFileContent } from "../types";
 import { Markdown } from "./markdown";
 
 interface Props {
-  file: { path: string; name: string };
+  file: { path: string; name: string; root?: string };
   onClose: () => void;
   onInsertRef: (path: string) => void;
 }
@@ -94,7 +94,7 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
       setParsing(true);
       setParsed(null);
       setParseError("");
-      parseWorkspaceFile(file.path)
+      parseWorkspaceFile(file.path, file.root)
         .then(setParsed)
         .catch((e) => setParseError((e as Error).message))
         .finally(() => setParsing(false));
@@ -105,12 +105,12 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
       setLoading(true);
       setError("");
       setData(null);
-      readWorkspaceFile(file.path)
+      readWorkspaceFile(file.path, file.root)
         .then(setData)
         .catch((e) => setError((e as Error).message))
         .finally(() => setLoading(false));
     }
-  }, [file.path, file.name, isDoc]);
+  }, [file.path, file.name, isDoc, file.root]);
 
   useEffect(
     () => () => {
@@ -130,8 +130,8 @@ export function FilePreview({ file, onClose, onInsertRef }: Props) {
   const isImage = !!data && !data.isBinary && data.mime.startsWith("image/");
   const isMarkdown = !!data && !data.isBinary && (data.mime === "text/markdown" || ext === "md" || ext === "markdown");
   const isCsv = ext === "csv" && !!data && !data.isBinary;
-  const rawUrl = data ? authenticatedUrl(`/api/workspace/file/raw?path=${encodeURIComponent(data.path)}`) : "";
-  const htmlUrl = isHtml && data ? authenticatedUrl(`/api/workspace/preview/${data.path.split("/").map(encodeURIComponent).join("/")}`) : "";
+  const rawUrl = data ? authenticatedUrl(`/api/workspace/file/raw?path=${encodeURIComponent(data.path)}${file.root ? `&root=${encodeURIComponent(file.root)}` : ""}`) : "";
+  const htmlUrl = isHtml && data ? authenticatedUrl(`/api/workspace/preview/${data.path.split("/").map(encodeURIComponent).join("/")}${file.root ? `?root=${encodeURIComponent(file.root)}` : ""}`) : "";
   const imgSrc = data?.content ?? (isImage ? rawUrl : undefined);
   const csv = isCsv ? csvRows(data?.content ?? "") : [];
 

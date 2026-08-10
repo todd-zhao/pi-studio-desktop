@@ -307,30 +307,32 @@ export async function switchWorkspace(path: string): Promise<WorkspaceInfo[]> {
   });
 }
 
-export async function listWorkspaceFiles(path: string): Promise<FileEntry[]> {
+export async function listWorkspaceFiles(path: string, root?: string): Promise<FileEntry[]> {
   const q = new URLSearchParams({ path });
+  if (root) q.set("root", root);
   const r = await json<{ entries: FileEntry[] }>(`/api/workspace/files?${q}`);
   return r.entries;
 }
 
-export async function moveWorkspaceFile(source: string, destination: string): Promise<{ ok: boolean }> {
+export async function moveWorkspaceFile(source: string, destination: string, root?: string): Promise<{ ok: boolean }> {
   return json<{ ok: boolean }>("/api/workspace/files/move", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, destination }),
+    body: JSON.stringify({ source, destination, ...(root ? { root } : {}) }),
   });
 }
 
-export async function readWorkspaceFile(path: string): Promise<WorkspaceFileContent> {
+export async function readWorkspaceFile(path: string, root?: string): Promise<WorkspaceFileContent> {
   const q = new URLSearchParams({ path });
+  if (root) q.set("root", root);
   return json<WorkspaceFileContent>(`/api/workspace/file?${q}`);
 }
 
-export async function parseWorkspaceFile(path: string): Promise<ParsedDoc> {
+export async function parseWorkspaceFile(path: string, root?: string): Promise<ParsedDoc> {
   return json<ParsedDoc>("/api/workspace/file/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, ...(root ? { root } : {}) }),
   });
 }
 

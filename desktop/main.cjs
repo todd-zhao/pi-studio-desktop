@@ -84,6 +84,11 @@ function startServer() {
     PI_STUDIO_AUTH_TOKEN: authToken,
     PI_STUDIO_LOAD_GLOBAL_EXTENSIONS: "0",
     PI_STUDIO_INHERIT_PROVIDER_ENV: "0",
+    PI_STUDIO_DATA_DIR: dataDir,
+    PI_STUDIO_WORKSPACES_FILE: path.join(dataDir, "workspaces.json"),
+    PI_STUDIO_PROJECTS_FILE: path.join(dataDir, "projects.json"),
+    PI_STUDIO_PROJECT_INDEX_FILE: path.join(dataDir, "project-index.json"),
+    PI_STUDIO_ARCHIVED_FILE: path.join(dataDir, "archived-sessions.json"),
     PI_OFFLINE: "1",
   };
   delete childEnv.NODE_OPTIONS;

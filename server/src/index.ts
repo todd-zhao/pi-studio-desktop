@@ -27,10 +27,12 @@ import { repairUploadedFilename } from "./textEncoding.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..", "..");
+const DATA_DIR = process.env.PI_STUDIO_DATA_DIR ? resolve(process.env.PI_STUDIO_DATA_DIR) : join(ROOT, "data");
 const DEFAULT_WORKSPACE = process.env.PI_STUDIO_WORKSPACE ? resolve(process.env.PI_STUDIO_WORKSPACE) : join(ROOT, "workspace");
 function resolveInitialWorkspace(): string {
   try {
-    const data = JSON.parse(readFileSync(join(ROOT, "data", "workspaces.json"), "utf8")) as { active?: string };
+    const workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ? resolve(process.env.PI_STUDIO_WORKSPACES_FILE) : join(DATA_DIR, "workspaces.json");
+    const data = JSON.parse(readFileSync(workspacesFile, "utf8")) as { active?: string };
     if (typeof data.active === "string" && data.active) {
       const abs = resolve(data.active);
       if (existsSync(abs) && statSync(abs).isDirectory()) return abs;
@@ -54,7 +56,7 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
   ? resolve(process.env.PI_CODING_AGENT_DIR)
-  : join(ROOT, "data", "pi-agent");
+  : join(DATA_DIR, "pi-agent");
 process.env.PI_CODING_AGENT_DIR ??= AGENT_DIR;
 
 // Keep a fresh app independent from provider credentials configured on the host.
@@ -369,7 +371,8 @@ app.post("/api/workspaces/switch", async (req, res) => {
 app.get("/api/workspace/files", (req, res) => {
   try {
     const path = String(req.query.path ?? "");
-    res.json({ entries: bridge.listWorkspaceFiles(path) });
+    const root = String(req.query.root ?? "");
+    res.json({ entries: bridge.listWorkspaceFiles(path, root || undefined) });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -379,8 +382,9 @@ app.post("/api/workspace/files/move", (req, res) => {
   try {
     const source = String(req.body?.source ?? "");
     const destination = String(req.body?.destination ?? "");
+    const root = String(req.body?.root ?? "");
     if (!source || !destination) throw new Error("缺少源文件或目标文件夹");
-    bridge.moveWorkspaceFile(source, destination);
+    bridge.moveWorkspaceFile(source, destination, root || undefined);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
@@ -390,8 +394,9 @@ app.post("/api/workspace/files/move", (req, res) => {
 app.get("/api/workspace/file", async (req, res) => {
   try {
     const path = String(req.query.path ?? "");
+    const root = String(req.query.root ?? "");
     if (!path) throw new Error("缺少 path");
-    res.json(await bridge.readWorkspaceFile(path));
+    res.json(await bridge.readWorkspaceFile(path, root || undefined));
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }
@@ -402,8 +407,9 @@ app.get("/api/workspace/file", async (req, res) => {
 app.get("/api/workspace/preview/*", (req, res) => {
   try {
     const rel = String((req.params as Record<string, string>)["0"] ?? "");
+    const root = String(req.query.root ?? "");
     if (!rel) throw new Error("缺少 path");
-    const abs = bridge.resolveWorkspacePath(rel.split("/").map((segment) => decodeURIComponent(segment)).join("/"));
+    const abs = bridge.resolveWorkspacePath(rel.split("/").map((segment) => decodeURIComponent(segment)).join("/"), root || undefined);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${rel}`);
     const token = requestToken(req);
     if (AUTH_TOKEN && token) {
@@ -425,8 +431,9 @@ app.get("/api/workspace/preview/*", (req, res) => {
 app.get("/api/workspace/file/raw", (req, res) => {
   try {
     const path = String(req.query.path ?? "");
+    const root = String(req.query.root ?? "");
     if (!path) throw new Error("缺少 path");
-    const abs = bridge.resolveWorkspacePath(path);
+    const abs = bridge.resolveWorkspacePath(path, root || undefined);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${path}`);
     res.sendFile(abs, { headers: { "Content-Disposition": "inline" } });
   } catch (e) {
@@ -439,8 +446,9 @@ app.post("/api/workspace/file/parse", async (req, res) => {
   try {
     const { parseDocx, parseXlsx, parsePptx } = await import("./parsers.ts");
     const path = String(req.body?.path ?? "");
+    const root = String(req.body?.root ?? "");
     if (!path) throw new Error("缺少 path");
-    const abs = bridge.resolveWorkspacePath(path);
+    const abs = bridge.resolveWorkspacePath(path, root || undefined);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${path}`);
     if (statSync(abs).size > 20 * 1024 * 1024) throw new Error("文件过大（>20MB），无法解析");
 

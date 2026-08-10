@@ -94,7 +94,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth("pi-studio-sidebar-width", 264, 220, 420));
   const [rightPanelWidth, setRightPanelWidth] = useState(() => storedPaneWidth("pi-studio-right-panel-width", 380, 280, 600));
-  const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
+  const [preview, setPreview] = useState<{ path: string; name: string; root?: string } | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [openTabFiles, setOpenTabFiles] = useState<string[]>([]);
   const openTabsInitializedRef = useRef(false);
@@ -763,7 +763,7 @@ export default function App() {
           onAddWorkspace={addWorkspace}
           onPickFile={handlePickFile}
           onPickDir={handlePickDir}
-          onPreviewFile={(path, name) => setPreview({ path, name })}
+          onPreviewFile={(path, name, root) => setPreview({ path, name, root })}
           onCollapse={() => setSidebarOpen(false)}
           onRefreshSessions={() => void refreshSessions()}
           onSetThinking={(level) => socketRef.current?.send({ type: "set_thinking", level })}
@@ -826,11 +826,18 @@ export default function App() {
         </div>
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>
-      <Suspense fallback={preview ? <div className="right-panel panel-loading">加载面板中…</div> : null}>
+      {(panel || preview) && (
+        <div
+            className="pane-resizer right-resizer"
+            role="separator"
+            aria-label="调整右侧面板宽度"
+            aria-orientation="vertical"
+            onPointerDown={(event) => startResize("right", event)}
+            title="拖动调整右侧面板宽度"
+          />
+      )}
       {panel && (
-        <div className="config-modal-backdrop" onClick={() => setPanel(null)}>
-          <div className="modal config-modal" onClick={(e) => e.stopPropagation()}>
-            <Suspense fallback={<div className="panel-loading">加载面板中…</div>}>
+        <Suspense fallback={<div className="right-panel panel-loading">加载面板中…</div>}>
       {panel === "mcp" && (
         <div className="right-panel">
           <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />
@@ -897,18 +904,17 @@ export default function App() {
           />
         </div>
       )}
-            </Suspense>
-          </div>
-        </div>
+          </Suspense>
       )}
       {preview && (
-        <FilePreview
-          file={preview}
-          onClose={() => setPreview(null)}
-          onInsertRef={(path) => handlePickFile(path, path.split("/").pop() ?? path)}
-        />
+        <Suspense fallback={<div className="right-panel panel-loading">加载面板中…</div>}>
+          <FilePreview
+            file={preview}
+            onClose={() => setPreview(null)}
+            onInsertRef={(path) => handlePickFile(path, path.split("/").pop() ?? path)}
+          />
+        </Suspense>
       )}
-      </Suspense>
       {folderPickerOpen && (
         <DirPicker
           title="选择要引用的文件夹"

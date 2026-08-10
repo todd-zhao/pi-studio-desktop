@@ -30,9 +30,9 @@ interface Props {
   onAddWorkspace: (path: string) => void;
   onRefreshSessions: () => void;
   onSetThinking: (level: string) => void;
-  onPickFile: (relPath: string, name: string) => void;
-  onPickDir: (relPath: string) => void;
-  onPreviewFile: (relPath: string, name: string) => void;
+  onPickFile: (relPath: string, name: string, root?: string) => void;
+  onPickDir: (relPath: string, root?: string) => void;
+  onPreviewFile: (relPath: string, name: string, root?: string) => void;
   onCollapse: () => void;
 }
 
@@ -115,6 +115,8 @@ export function Sidebar(props: Props) {
       updatedAt: session.createdAt ?? Date.now(),
     });
   }
+
+  const activeProject = visibleProjects.find((p) => p.id === props.selectedProjectId);
 
   const renderSession = (session: SessionMeta, nested = false) => (
     <div
@@ -359,7 +361,14 @@ export function Sidebar(props: Props) {
         </div>
       ) : (
           <div className="session-list">
-            <FileTree key={state?.cwd ?? ""} rootPath={state?.cwd} onPickFile={props.onPickFile} onPreview={props.onPreviewFile} onPickDir={props.onPickDir} />
+            <FileTree
+              key={`${state?.cwd ?? ""}|${(activeProject?.workspacePaths ?? []).join(",")}`}
+              rootPath={state?.cwd}
+              roots={activeProject?.workspacePaths?.length ? activeProject.workspacePaths : [state?.cwd ?? ""].filter(Boolean)}
+              onPickFile={props.onPickFile}
+              onPreview={props.onPreviewFile}
+              onPickDir={props.onPickDir}
+            />
           </div>
         )}
       </div>

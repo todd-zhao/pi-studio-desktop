@@ -220,13 +220,19 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.agentsFile = join(this.agentDir, "agents.json");
     this.hermesMemoryExtensionPath = appRequire.resolve("pi-hermes-memory");
     this.loadAgents();
-    this.workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ?? resolve(this.cwd, "..", "data", "workspaces.json");
-    this.projectsFile = process.env.PI_STUDIO_PROJECTS_FILE ?? resolve(this.cwd, "..", "data", "projects.json");
-    this.projectIndexFile = process.env.PI_STUDIO_PROJECT_INDEX_FILE ?? resolve(this.cwd, "..", "data", "project-index.json");
-    this.archivedFile = process.env.PI_STUDIO_ARCHIVED_FILE ?? resolve(this.cwd, "..", "data", "archived-sessions.json");
+    this.workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ?? this.defaultDataFile("workspaces.json");
+    this.projectsFile = process.env.PI_STUDIO_PROJECTS_FILE ?? this.defaultDataFile("projects.json");
+    this.projectIndexFile = process.env.PI_STUDIO_PROJECT_INDEX_FILE ?? this.defaultDataFile("project-index.json");
+    this.archivedFile = process.env.PI_STUDIO_ARCHIVED_FILE ?? this.defaultDataFile("archived-sessions.json");
     this.loadWorkspaces();
     this.loadProjects();
     this.loadArchivedSessions();
+  }
+
+  private defaultDataFile(name: string): string {
+    return process.env.PI_STUDIO_DATA_DIR
+      ? resolve(process.env.PI_STUDIO_DATA_DIR, name)
+      : resolve(this.cwd, "..", "data", name);
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -1037,7 +1043,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     const out: string[] = [];
     for (const item of raw) {
       if (typeof item !== "string" || !item.trim()) continue;
-      const abs = resolve(item.trim());
+      const abs = resolve(this.cwd, item.trim());
       if (seen.has(abs)) continue;
       seen.add(abs);
       out.push(abs);
@@ -1438,8 +1444,10 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.emit("workspaces", this.listWorkspaces());
   }
 
-  listWorkspaceFiles(relPath: string): FileEntry[] {
-    const base = relPath ? resolve(this.cwd, relPath) : this.cwd;
+  listWorkspaceFiles(relPath: string, root?: string): FileEntry[] {
+    const absRoot = resolve(root ? root : this.cwd);
+    const base = relPath ? resolve(absRoot, relPath) : absRoot;
+    if (base !== absRoot && !base.startsWith(absRoot + sep)) throw new Error("路径越界，拒绝读取");
     if (!existsSync(base) || !statSync(base).isDirectory()) throw new Error(`目录不存在: ${relPath || "/"}`);
     const entries = readdirSync(base, { withFileTypes: true })
       .filter((d) => !d.name.startsWith(".") && d.name !== "node_modules" && d.name !== "uploads")
@@ -1465,20 +1473,20 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     return entries;
   }
 
-  /** Resolve a workspace-relative path, rejecting traversal outside the workspace. */
-  resolveWorkspacePath(relPath: string): string {
-    const root = resolve(this.cwd);
-    const abs = resolve(root, relPath);
-    if (abs !== root && !abs.startsWith(root + sep)) throw new Error("路径越界，拒绝读取");
+  /** Resolve a workspace-relative path, rejecting traversal outside the given root. */
+  resolveWorkspacePath(relPath: string, root?: string): string {
+    const absRoot = resolve(root ? root : this.cwd);
+    const abs = resolve(absRoot, relPath);
+    if (abs !== absRoot && !abs.startsWith(absRoot + sep)) throw new Error("路径越界，拒绝读取");
     return abs;
   }
 
   /** Read a workspace file for preview: text head (≤1MB) or full image (≤8MB). */
-  moveWorkspaceFile(sourceRelPath: string, destinationDir: string): void {
-    const root = resolve(this.cwd);
-    const sourceAbs = this.resolveWorkspacePath(sourceRelPath);
+  moveWorkspaceFile(sourceRelPath: string, destinationDir: string, root?: string): void {
+    const absRoot = resolve(root ? root : this.cwd);
+    const sourceAbs = this.resolveWorkspacePath(sourceRelPath, root);
     const destAbs = resolve(destinationDir);
-    if (destAbs !== root && !destAbs.startsWith(root + sep)) throw new Error("目标文件夹不在当前工作区");
+    if (destAbs !== absRoot && !destAbs.startsWith(absRoot + sep)) throw new Error("目标文件夹不在当前工作区");
     if (!existsSync(destAbs) || !statSync(destAbs).isDirectory()) throw new Error("目标文件夹不存在");
     if (!existsSync(sourceAbs)) throw new Error("源文件不存在");
     if (resolve(dirname(sourceAbs)) === destAbs) return;
@@ -1508,8 +1516,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (changed) this.saveProjects();
   }
 
-  async readWorkspaceFile(relPath: string): Promise<WorkspaceFileContent> {
-    const abs = this.resolveWorkspacePath(relPath);
+  async readWorkspaceFile(relPath: string, root?: string): Promise<WorkspaceFileContent> {
+    const abs = this.resolveWorkspacePath(relPath, root);
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${relPath}`);
 
     const st = statSync(abs);
