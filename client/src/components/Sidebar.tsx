@@ -108,6 +108,7 @@ export function Sidebar(props: Props) {
       id: session.projectId,
       name: session.projectName?.trim() || "未命名项目",
       description: "",
+      workspacePaths: [],
       sessionCount: sessionsByProject.get(session.projectId)?.length ?? 0,
       memoryCount: 0,
       documentCount: 0,

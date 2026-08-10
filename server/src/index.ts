@@ -715,11 +715,16 @@ app.get("/api/projects", (_req, res) => {
 
 app.post("/api/projects", (req, res) => {
   try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const workspacePaths = Array.isArray(body.workspacePaths)
+      ? body.workspacePaths.map((item) => String(item))
+      : undefined;
     const project = bridge.createProject({
-      name: String(req.body?.name ?? ""),
-      description: req.body?.description === undefined ? undefined : String(req.body.description),
-      workspacePath: req.body?.workspacePath ? String(req.body.workspacePath) : undefined,
-      instructions: req.body?.instructions === undefined ? undefined : String(req.body.instructions),
+      name: String(body.name ?? ""),
+      description: body.description === undefined ? undefined : String(body.description),
+      workspacePaths,
+      workspacePath: workspacePaths === undefined && body.workspacePath ? String(body.workspacePath) : undefined,
+      instructions: body.instructions === undefined ? undefined : String(body.instructions),
     });
     res.json(project);
   } catch (e) {
@@ -737,11 +742,16 @@ app.get("/api/projects/:id", (req, res) => {
 
 app.patch("/api/projects/:id", async (req, res) => {
   try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const workspacePaths = Array.isArray(body.workspacePaths)
+      ? body.workspacePaths.map((item) => String(item))
+      : undefined;
     const project = await bridge.updateProject(decodeURIComponent(req.params.id), {
-      name: req.body?.name === undefined ? undefined : String(req.body.name),
-      description: req.body?.description === undefined ? undefined : String(req.body.description),
-      workspacePath: req.body?.workspacePath === undefined ? undefined : (req.body.workspacePath ? String(req.body.workspacePath) : null),
-      instructions: req.body?.instructions === undefined ? undefined : String(req.body.instructions),
+      name: body.name === undefined ? undefined : String(body.name),
+      description: body.description === undefined ? undefined : String(body.description),
+      workspacePaths,
+      workspacePath: workspacePaths === undefined && body.workspacePath !== undefined ? (body.workspacePath ? String(body.workspacePath) : null) : undefined,
+      instructions: body.instructions === undefined ? undefined : String(body.instructions),
     });
     res.json(project);
   } catch (e) {

@@ -578,6 +578,20 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async newSession(projectId?: string): Promise<void> {
+    // A brand-new conversation without an explicit project belongs to the
+    // default "临时对话" workspace, so it stays reachable after switching.
+    if (!projectId && resolve(this.cwd) !== resolve(this.defaultWorkspacePath)) {
+      await this.dispose();
+      this.cwd = resolve(this.defaultWorkspacePath);
+      this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
+      this.lastMcpStatus = null;
+      await this.createRuntime();
+      this.emit("log", "info", `工作区已切换: ${this.cwd}`);
+      this.pushState();
+      await this.emitSessions();
+      this.emit("workspaces", this.listWorkspaces());
+      return;
+    }
     const active = this.activeEntry();
     const inheritedProject = projectId
       ? this.requireProject(projectId)
@@ -1005,6 +1019,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       const parsed = JSON.parse(readFileSync(this.projectsFile, "utf8")) as { projects?: Project[] };
       this.projects = Array.isArray(parsed.projects) ? parsed.projects.map((project) => ({
         ...project,
+        workspacePaths: this.normalizeWorkspacePaths((project as { workspacePaths?: unknown; workspacePath?: unknown }).workspacePaths ?? (project as { workspacePath?: unknown }).workspacePath),
         sessionFiles: Array.isArray(project.sessionFiles) ? project.sessionFiles.map((file) => resolve(file)) : [],
         memories: Array.isArray(project.memories) ? project.memories : [],
         documents: Array.isArray(project.documents)
@@ -1014,6 +1029,20 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     } catch {
       this.projects = [];
     }
+  }
+
+  private normalizeWorkspacePaths(value: unknown): string[] {
+    const raw = Array.isArray(value) ? value : value ? [value] : [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of raw) {
+      if (typeof item !== "string" || !item.trim()) continue;
+      const abs = resolve(item.trim());
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      out.push(abs);
+    }
+    return out;
   }
 
   private saveProjects(): void {
@@ -1129,7 +1158,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       id: project.id,
       name: project.name,
       description: project.description,
-      workspacePath: project.workspacePath,
+      workspacePaths: project.workspacePaths ?? [],
       sessionCount: project.sessionFiles.length,
       memoryCount: project.memories.length,
       documentCount: project.documents.length,
@@ -1157,7 +1186,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     return structuredClone(this.requireProject(id));
   }
 
-  createProject(input: { name: string; description?: string; workspacePath?: string; instructions?: string }): Project {
+  createProject(input: { name: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string; instructions?: string }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("Project name is required");
     if (name.length > 120) throw new Error("Project name is too long");
@@ -1166,7 +1195,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       id: randomUUID(),
       name,
       description: (input.description ?? "").trim(),
-      workspacePath: input.workspacePath ? resolve(input.workspacePath) : undefined,
+      workspacePaths: this.normalizeWorkspacePaths(input.workspacePaths ?? input.workspacePath),
       instructions: (input.instructions ?? "").trim(),
       sessionFiles: [],
       memories: [],
@@ -1179,7 +1208,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     return structuredClone(project);
   }
 
-  async updateProject(id: string, patch: { name?: string; description?: string; workspacePath?: string | null; instructions?: string }): Promise<Project> {
+  async updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string | null; instructions?: string }): Promise<Project> {
     const project = this.requireProject(id);
     if (patch.name !== undefined) {
       const name = patch.name.trim();
@@ -1187,7 +1216,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       project.name = name;
     }
     if (patch.description !== undefined) project.description = patch.description.trim();
-    if (patch.workspacePath !== undefined) project.workspacePath = patch.workspacePath ? resolve(patch.workspacePath) : undefined;
+    if (patch.workspacePaths !== undefined || patch.workspacePath !== undefined) project.workspacePaths = this.normalizeWorkspacePaths(patch.workspacePaths ?? patch.workspacePath);
     if (patch.instructions !== undefined) project.instructions = patch.instructions.trim();
     project.updatedAt = Date.now();
     this.saveProjects();
@@ -1305,7 +1334,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     const project = this.projectForSessionFile(sessionFile);
     if (!project) return [];
     const additions: string[] = [];
-    if (project.description || project.workspacePath) additions.push("## Project context\n<project-context>\nThis conversation belongs to the project \"" + project.name + "\".\n" + (project.description ? project.description + "\n" : "") + (project.workspacePath ? "Project workspace: " + project.workspacePath + "\n" : "") + "</project-context>\nTreat this as shared context across the project's conversations.");
+    const workspaces = project.workspacePaths ?? [];
+    if (project.description || workspaces.length) additions.push("## Project context\n<project-context>\nThis conversation belongs to the project \"" + project.name + "\".\n" + (project.description ? project.description + "\n" : "") + (workspaces.length ? "Project workspaces:\n" + workspaces.map((workspace) => "- " + workspace).join("\n") + "\n" : "") + "</project-context>\nTreat this as shared context across the project's conversations.");
     if (project.instructions) additions.push("## Project instructions\n<project-instructions>\n" + project.instructions + "\n</project-instructions>");
     const memories = [...project.memories].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt).slice(0, 20);
     if (memories.length) additions.push("## Project memory\n<project-memory>\n" + memories.map((memory) => "- [" + memory.type + (memory.pinned ? ", pinned" : "") + "] " + memory.content).join("\n") + "\n</project-memory>");
@@ -1365,6 +1395,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
         current: abs === resolve(this.cwd),
       });
     };
+    push(this.defaultWorkspacePath);
     push(this.cwd);
     for (const p of this.customWorkspaces) push(p);
     return out;

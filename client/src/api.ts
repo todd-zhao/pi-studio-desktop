@@ -182,7 +182,7 @@ export async function getProject(id: string): Promise<Project> {
   return json<Project>(`/api/projects/${encodeURIComponent(id)}`);
 }
 
-export async function createProject(input: { name: string; description?: string; workspacePath?: string; instructions?: string }): Promise<Project> {
+export async function createProject(input: { name: string; description?: string; workspacePaths?: string[]; workspacePath?: string; instructions?: string }): Promise<Project> {
   return json<Project>("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -190,7 +190,7 @@ export async function createProject(input: { name: string; description?: string;
   });
 }
 
-export async function updateProject(id: string, patch: { name?: string; description?: string; workspacePath?: string | null; instructions?: string }): Promise<Project> {
+export async function updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | null; workspacePath?: string | null; instructions?: string }): Promise<Project> {
   return json<Project>(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

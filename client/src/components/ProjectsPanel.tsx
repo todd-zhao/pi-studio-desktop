@@ -26,7 +26,8 @@ interface Props {
   onToast: (level: "info" | "warn" | "error" | "ok", message: string) => void;
 }
 
-const emptyDraft = { name: "", description: "", workspacePath: "", instructions: "" };
+type ProjectDraft = { name: string; description: string; workspacePaths: string[]; instructions: string };
+const emptyDraft: ProjectDraft = { name: "", description: "", workspacePaths: [], instructions: "" };
 const memoryTypes: ProjectMemoryType[] = ["fact", "decision", "preference", "summary"];
 
 export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, onProjectsChange, onStateRefresh, onSessionSelect, onClose, onToast }: Props) {
@@ -37,6 +38,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemory, setEditingMemory] = useState<{ content: string; type: ProjectMemoryType; pinned: boolean }>({ content: "", type: "fact", pinned: false });
   const [documentPath, setDocumentPath] = useState("");
+  const [workspaceInput, setWorkspaceInput] = useState("");
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -50,7 +52,8 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     if (id) {
       const detail = await getProject(id);
       setProject(detail);
-      setDraft({ name: detail.name, description: detail.description, workspacePath: detail.workspacePath ?? "", instructions: detail.instructions });
+      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], instructions: detail.instructions });
+      setWorkspaceInput("");
     } else {
       setProject(null);
       setDraft(emptyDraft);
@@ -89,7 +92,8 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     try {
       const detail = await getProject(id);
       setProject(detail);
-      setDraft({ name: detail.name, description: detail.description, workspacePath: detail.workspacePath ?? "", instructions: detail.instructions });
+      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], instructions: detail.instructions });
+      setWorkspaceInput("");
     } catch (error) {
       onToast("error", (error as Error).message);
     }
@@ -103,11 +107,11 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     setBusy(true);
     try {
       if (project) {
-        await updateProject(project.id, { ...draft, workspacePath: draft.workspacePath.trim() || null });
+        await updateProject(project.id, { ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()) });
         onToast("ok", "项目已更新");
         await refreshProjects(project.id);
       } else {
-        const created = await createProject({ ...draft, workspacePath: draft.workspacePath.trim() || undefined });
+        const created = await createProject({ ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()) });
         onToast("ok", "项目已创建");
         await refreshProjects(created.id);
       }
@@ -246,7 +250,22 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
       <div className="panel-title" style={{ marginTop: 16 }}>{project ? "项目设置" : "创建项目"}</div>
       <div className="form-row"><input className="grow" placeholder="项目名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>
       <div className="form-row" style={{ marginTop: 6 }}><input className="grow" placeholder="项目说明（可选）" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></div>
-      <div className="form-row" style={{ marginTop: 6 }}><input className="grow" placeholder="项目工作区路径（可选）" value={draft.workspacePath} onChange={(event) => setDraft({ ...draft, workspacePath: event.target.value })} /></div>
+      <div className="form-row" style={{ marginTop: 6, flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        {draft.workspacePaths.map((path, index) => (
+          <div className="form-row" key={index} style={{ gap: 6 }}>
+            <input className="grow" value={path} readOnly title={path} />
+            <button className="mini-btn danger" type="button" onClick={() => setDraft({ ...draft, workspacePaths: draft.workspacePaths.filter((_, i) => i !== index) })}>移除</button>
+          </div>
+        ))}
+        <div className="form-row" style={{ gap: 6 }}>
+          <input className="grow" placeholder="添加项目工作区路径（可选）" value={workspaceInput} onChange={(event) => setWorkspaceInput(event.target.value)} />
+          <button className="mini-btn primary" type="button" disabled={!workspaceInput.trim()} onClick={() => {
+            const path = workspaceInput.trim();
+            if (path && !draft.workspacePaths.includes(path)) setDraft({ ...draft, workspacePaths: [...draft.workspacePaths, path] });
+            setWorkspaceInput("");
+          }}>添加</button>
+        </div>
+      </div>
       <div className="form-row" style={{ marginTop: 6 }}><textarea className="grow" rows={4} placeholder="项目指令：所有项目会话都应遵守的约束" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></div>
       <div className="settings-actions">
         <button className="mini-btn primary" disabled={busy} onClick={() => void save()}>{project ? "保存项目" : "创建项目"}</button>

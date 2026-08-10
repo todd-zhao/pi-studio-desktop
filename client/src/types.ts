@@ -98,7 +98,7 @@ export interface Project {
   id: string;
   name: string;
   description: string;
-  workspacePath?: string;
+  workspacePaths: string[];
   instructions: string;
   sessionFiles: string[];
   memories: ProjectMemory[];
@@ -111,7 +111,7 @@ export interface ProjectSummary {
   id: string;
   name: string;
   description: string;
-  workspacePath?: string;
+  workspacePaths: string[];
   sessionCount: number;
   memoryCount: number;
   documentCount: number;
