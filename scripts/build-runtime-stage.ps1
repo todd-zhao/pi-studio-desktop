@@ -91,6 +91,9 @@ if (Test-Path -LiteralPath $runtimeTypes) {
   Remove-Item -LiteralPath $runtimeTypes -Recurse -Force
 }
 
+Write-Host "==> Pruning node_modules to the external keep-set (see docs/runtime-deps.md)..."
+& node (Join-Path $root "scripts\keep-runtime-deps.cjs") (Join-Path $depsStage "node_modules")
+if ($LASTEXITCODE -ne 0) { throw "runtime dependency pruning failed" }
 robocopy (Join-Path $depsStage "node_modules") (Join-Path $appDir "node_modules") /E /MT:16 /R:1 /W:1 /XD pi-studio-client pi-studio-server /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy node_modules failed with exit code $LASTEXITCODE" }
 

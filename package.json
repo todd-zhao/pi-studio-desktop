@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "private": true,
   "main": "desktop/main.cjs",
   "description": "Pi Studio — 基于 Pi SDK 的 Codex 风格 Web 前端（含 MCP 支持）",
@@ -12,7 +12,7 @@
     "install:all": "npm install --workspaces --include=dev",
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
-    "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=esm --packages=external --alias:pi-mcp-adapter=./node_modules/pi-mcp-adapter/index.ts --outfile=server/dist/index.mjs",
+    "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=esm --alias:pi-mcp-adapter=./node_modules/pi-mcp-adapter/index.ts --outfile=server/dist/index.mjs --external:@earendil-works/pi-tui --external:silk-wasm --sourcemap=linked --sources-content --banner:js=\"import { createRequire as __piCreateRequire } from 'module'; const require = __piCreateRequire(import.meta.url);\"",
     "build:client": "npm run build -w client",
     "typecheck:client": "tsc -p client/tsconfig.json --noEmit",
     "typecheck:server": "tsc -p server/tsconfig.json --noEmit",
