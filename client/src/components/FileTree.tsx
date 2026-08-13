@@ -152,6 +152,7 @@ function RootTree({ root, treeVersion, onPickFile, onPreview, onPickDir, onMoveF
   onMoveFile?: (path: string, root?: string) => void;
 }) {
   const [state, setState] = useState<DirState>({ loaded: false, loading: false, entries: [], error: "" });
+  const [open, setOpen] = useState(true);
 
   useEffect(() => {
     setState({ loaded: false, loading: true, entries: [], error: "" });
@@ -164,46 +165,58 @@ function RootTree({ root, treeVersion, onPickFile, onPreview, onPickDir, onMoveF
 
   return (
     <div>
-      <div className="ft-root">{title}</div>
-      {state.loading && <div className="ft-hint">加载中…</div>}
-      {state.error && <div className="ft-hint err">⚠ {state.error}</div>}
-      {state.loaded && state.entries.length === 0 && <div className="ft-hint">（空目录）</div>}
-      {state.entries.map((e) =>
-        e.isDir ? (
-          <DirRow key={`${root ?? ""}|${e.path}-${treeVersion}`} entry={e} depth={0} root={root} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} onMoveFile={onMoveFile} treeVersion={treeVersion} />
-        ) : (
-          <div
-            key={`${root ?? ""}|${e.path}`}
-            className="ft-row ft-file"
-            style={{ paddingLeft: "22px" }}
-            title={`点击预览 ${e.path}（＋ 插入引用）`}
-            onClick={() => onPreview?.(e.path, e.name, root)}
-          >
-            <span className="ft-arrow" style={{ visibility: "hidden" }}>▸</span>
-            <span className="ft-icon">{fileIcon(e.name)}</span>
-            <span className="ft-name">{e.name}</span>
-            <button
-              className="ft-add"
-              title={`插入引用 @${e.path}`}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                onPickFile(e.path, e.name, root);
-              }}
-            >
-              ＋
-            </button>
-            <button
-              className="ft-move"
-              title="移动文件"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                onMoveFile?.(e.path, root);
-              }}
-            >
-              ↗
-            </button>
-          </div>
-        ),
+      <div
+        className="ft-row ft-root-row"
+        onClick={() => setOpen((o) => !o)}
+        title={root ?? "工作区根目录"}
+      >
+        <span className="ft-arrow">{open ? "▾" : "▸"}</span>
+        <span className="ft-icon">📁</span>
+        <span className="ft-name">{title}</span>
+      </div>
+      {open && (
+        <>
+          {state.loading && <div className="ft-hint">加载中…</div>}
+          {state.error && <div className="ft-hint err">⚠ {state.error}</div>}
+          {state.loaded && state.entries.length === 0 && <div className="ft-hint">（空目录）</div>}
+          {state.entries.map((e) =>
+            e.isDir ? (
+              <DirRow key={`${root ?? ""}|${e.path}-${treeVersion}`} entry={e} depth={0} root={root} onPickFile={onPickFile} onPreview={onPreview} onPickDir={onPickDir} onMoveFile={onMoveFile} treeVersion={treeVersion} />
+            ) : (
+              <div
+                key={`${root ?? ""}|${e.path}`}
+                className="ft-row ft-file"
+                style={{ paddingLeft: "22px" }}
+                title={`点击预览 ${e.path}（＋ 插入引用）`}
+                onClick={() => onPreview?.(e.path, e.name, root)}
+              >
+                <span className="ft-arrow" style={{ visibility: "hidden" }}>▸</span>
+                <span className="ft-icon">{fileIcon(e.name)}</span>
+                <span className="ft-name">{e.name}</span>
+                <button
+                  className="ft-add"
+                  title={`插入引用 @${e.path}`}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onPickFile(e.path, e.name, root);
+                  }}
+                >
+                  ＋
+                </button>
+                <button
+                  className="ft-move"
+                  title="移动文件"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onMoveFile?.(e.path, root);
+                  }}
+                >
+                  ↗
+                </button>
+              </div>
+            ),
+          )}
+        </>
       )}
     </div>
   );

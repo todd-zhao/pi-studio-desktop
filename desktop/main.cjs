@@ -7,8 +7,10 @@ const net = require("node:net");
 const path = require("node:path");
 
 const DEFAULT_PORT = Number(process.env.PI_STUDIO_PORT || 8787);
+const DEFAULT_TEAM_PORT = Number(process.env.PI_TEAM_PORT || 8790);
 const smokeMode = process.env.PI_STUDIO_SMOKE === "1";
 let port = DEFAULT_PORT;
+let teamPort = DEFAULT_TEAM_PORT;
 const authToken = randomBytes(32).toString("hex");
 const startupStartedAt = Date.now();
 
@@ -31,6 +33,8 @@ const workspaceDir = path.join(baseDir, "workspace");
 let mainWindow = null;
 let serverProcess = null;
 let serverRunning = false;
+let teamServerProcess = null;
+let teamServerRunning = false;
 
 function logServer(channel, chunk) {
   const text = String(chunk).replace(/\s+$/, "");
@@ -48,6 +52,25 @@ function serverCwd() {
 
 function serverRuntime() {
   return isPackaged ? path.join(process.resourcesPath, "runtime", "node.exe") : (process.env.npm_node_execpath || process.execPath);
+}
+
+function teamServerRoot() {
+  return isPackaged
+    ? path.join(process.resourcesPath, "team-server")
+    : path.join(projectRoot, "..", "..", "TeamServer", "source");
+}
+
+function teamServerEntry() {
+  return path.join(teamServerRoot(), "dist", "index.mjs");
+}
+
+function teamServerCwd() {
+  return teamServerRoot();
+}
+
+function logTeamServer(channel, chunk) {
+  const text = String(chunk).replace(/\s+$/, "");
+  if (text) console.log(`[team-server:${channel}] ${text}`);
 }
 
 function findAvailablePort(preferredPort) {
@@ -125,6 +148,7 @@ function startServer() {
 }
 
 function stopServer() {
+  stopTeamServer();
   if (serverProcess && serverRunning) {
     try {
       serverProcess.kill();
@@ -134,6 +158,89 @@ function stopServer() {
   }
   serverRunning = false;
   serverProcess = null;
+}
+
+function startTeamServer() {
+  const teamDataDir = path.join(baseDir, "team-data");
+  fs.mkdirSync(teamDataDir, { recursive: true });
+  const childEnv = {
+    ...process.env,
+    PI_TEAM_PORT: String(teamPort),
+    PI_TEAM_HOST: "127.0.0.1",
+    PI_TEAM_DATA_DIR: teamDataDir,
+  };
+  delete childEnv.NODE_OPTIONS;
+  if (!isPackaged && serverRuntime() === process.execPath) childEnv.ELECTRON_RUN_AS_NODE = "1";
+  else delete childEnv.ELECTRON_RUN_AS_NODE;
+
+  startupLog("team-server-spawn", `runtime=${serverRuntime()} entry=${teamServerEntry()}`);
+  const child = spawn(serverRuntime(), [teamServerEntry()], {
+    cwd: teamServerCwd(),
+    env: childEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stdout?.on("data", (chunk) => logTeamServer("out", chunk));
+  child.stderr?.on("data", (chunk) => logTeamServer("err", chunk));
+  child.on("spawn", () => {
+    teamServerRunning = true;
+    startupLog("team-server-spawned", `pid=${child.pid ?? "unknown"} port=${teamPort}`);
+  });
+  child.on("exit", (code) => {
+    teamServerRunning = false;
+    console.log(`[team-server] exited (code=${code})`);
+    if (teamServerProcess === child) teamServerProcess = null;
+  });
+  child.on("error", (error) => {
+    startupLog("team-server-error", error instanceof Error ? error.message : String(error));
+    console.error("[team-server] failed:", error);
+  });
+  return child;
+}
+
+function stopTeamServer() {
+  if (teamServerProcess && teamServerRunning) {
+    try {
+      teamServerProcess.kill();
+    } catch {
+      // Already gone.
+    }
+  }
+  teamServerRunning = false;
+  teamServerProcess = null;
+}
+
+function waitForTeamServer(timeoutMs = 30_000) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const attempt = () => {
+      const req = http.get(`http://127.0.0.1:${teamPort}/api/health`, (res) => {
+        res.resume();
+        if (res.statusCode === 200) {
+          finish(true);
+        } else if (Date.now() >= deadline) {
+          finish(false);
+        } else {
+          setTimeout(attempt, 250);
+        }
+      });
+      req.setTimeout(1500, () => req.destroy());
+      req.on("error", () => {
+        if (Date.now() >= deadline) {
+          finish(false);
+        } else {
+          setTimeout(attempt, 250);
+        }
+      });
+    };
+    attempt();
+  });
 }
 
 function waitForServer(timeoutMs = 90_000) {
@@ -291,10 +398,19 @@ async function main() {
     app.quit();
     return;
   }
+  const teamAvailablePort = await findAvailablePort(DEFAULT_TEAM_PORT);
+  if (teamAvailablePort) {
+    teamPort = teamAvailablePort;
+    teamServerProcess = startTeamServer();
+    const teamReady = await waitForTeamServer();
+    startupLog("team-server-ready", teamReady ? `port=${teamPort}` : "unavailable");
+  } else {
+    startupLog("team-server-skip", "no free port");
+  }
   if (mainWindow) {
     mainWindow.webContents.once("did-finish-load", () => startupLog("renderer-page-loaded"));
-    startupLog("renderer-load-start", `url=http://127.0.0.1:${port}/`);
-    await mainWindow.loadURL(`http://127.0.0.1:${port}/?token=${encodeURIComponent(authToken)}`);
+    startupLog("renderer-load-start", `url=http://127.0.0.1:${port}/ teamPort=${teamPort}`);
+    await mainWindow.loadURL(`http://127.0.0.1:${port}/?token=${encodeURIComponent(authToken)}&teamPort=${teamPort}`);
   }
 }
 

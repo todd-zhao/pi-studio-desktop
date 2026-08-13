@@ -1,4 +1,4 @@
-{
+﻿{
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -11,11 +11,9 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "types": ["node"]
-    ,"baseUrl": "."
-    ,"paths": {
-      "pi-mcp-adapter": ["src/pi-mcp-adapter-shim.d.ts"],
-      "pi-mcp-adapter/types": ["src/pi-mcp-adapter-shim.d.ts"]
-    }
-  },
+},
   "include": ["src", "scripts"]
 }
+
+
+

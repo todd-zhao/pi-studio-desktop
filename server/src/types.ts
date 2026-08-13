@@ -1,4 +1,4 @@
-// Shared protocol types between server and client.
+﻿// Shared protocol types between server and client.
 
 export interface ToolCallInfo {
   id: string;

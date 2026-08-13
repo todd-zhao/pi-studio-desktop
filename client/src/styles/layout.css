@@ -1,0 +1,191 @@
+/* ------------------------------------------------------------------ layout */
+
+.app {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  flex: 0 0 264px;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Column splitters stay wide enough to grab without taking visual space. */
+.pane-resizer {
+  position: relative;
+  z-index: 25;
+  flex: 0 0 8px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:active::after {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+body.is-resizing-columns,
+body.is-resizing-columns * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-columns iframe {
+  pointer-events: none;
+}
+
+/* collapsed left rail */
+.sidebar-rail {
+  width: 30px;
+  min-width: 30px;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+  color: var(--text-3);
+  font-size: 15px;
+  cursor: pointer;
+  outline: none;
+}
+
+.sidebar-rail:hover {
+  color: var(--text);
+  background: var(--bg-3);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.main-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 13px 30px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 52px;
+}
+
+.main-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.version-badge {
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 1px 7px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.main-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* New conversation: Codex-style centered hero + composer (header stays pinned top-left) */
+.main.has-empty .main-center {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 5vh;
+}
+
+.main.has-empty .chat {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.main.has-empty .chat-inner {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.main.has-empty .composer-wrap {
+  padding-top: 0;
+}
+
+.main.has-empty .composer {
+  border-color: var(--border-2);
+}
+
+.main.has-empty .composer-input {
+  padding: 10px 12px;
+}
+
+.main.has-empty .composer-input textarea {
+  min-height: 32px;
+  font-size: 15px;
+}
+
+/* centered hero (Codex-style landing) */
+.hero {
+  text-align: center;
+  padding: 2vh 24px 2vh;
+}
+
+.hero-title {
+  margin: 0;
+  font-size: clamp(38px, 5vw, 56px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  color: var(--text);
+  background: linear-gradient(180deg, var(--text) 35%, var(--text-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-sub {
+  margin: 14px auto 0;
+  font-size: 13px;
+  color: var(--text-3);
+  letter-spacing: 0.5px;
+}
+
+.right-panel {
+  width: var(--right-panel-width, 380px);
+  min-width: var(--right-panel-width, 380px);
+  flex: 0 0 var(--right-panel-width, 380px);
+  background: var(--bg-2);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+

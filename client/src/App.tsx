@@ -1,12 +1,18 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { PiSocket, archiveSession as archiveSessionApi, assignSessionToProject, deleteArchivedSession as deleteArchivedSessionApi, deleteSession as deleteSessionApi, getGoals, getSubagents, listAgents, listArchivedSessions, listProjects, listSessions, removeProject, removeSessionFromProject, restoreSession as restoreSessionApi, retryBoot, saveProjectMemory, setActiveAgent, setGoals, setSubagents } from "./api";
-import type { AgentProfile, AppState, ArchivedSession, AskUserQuestion, ClientMessage, McpStatusSnapshot, ProjectSummary, SessionMeta, AttachmentInfo, WechatCommandAction, WechatLogEntry, WechatQr, WechatStatus, WorkspaceInfo } from "./types";
+﻿import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { saveProjectMemory, setActiveAgent, setGoals } from "./api";
+import { Composer, type ComposerHandle } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
 import { DirPicker } from "./components/DirPicker";
 import { Chat } from "./components/Chat";
-import { Composer, type ComposerHandle } from "./components/Composer";
 import { LongTaskQueue } from "./components/LongTaskQueue";
 import { Markdown } from "./components/markdown";
+import { useLiveSocket } from "./hooks/useLiveSocket";
+import { useSessions } from "./hooks/useSessions";
+import { useToasts } from "./hooks/useToasts";
+import { useLayout } from "./hooks/useLayout";
+import { useTheme } from "./hooks/useTheme";
+import { useMemoMessages, type PanelTab, type RenderedMessage } from "./types-app";
+
 const McpPanel = lazy(() => import("./components/McpPanel").then((module) => ({ default: module.McpPanel })));
 const ModelsPanel = lazy(() => import("./components/ModelsPanel").then((module) => ({ default: module.ModelsPanel })));
 const SkillsPanel = lazy(() => import("./components/SkillsPanel").then((module) => ({ default: module.SkillsPanel })));
@@ -18,442 +24,96 @@ const ProjectsPanel = lazy(() => import("./components/ProjectsPanel").then((modu
 const ArchivedSessionsPanel = lazy(() => import("./components/ArchivedSessionsPanel").then((module) => ({ default: module.ArchivedSessionsPanel })));
 const FilePreview = lazy(() => import("./components/FilePreview").then((module) => ({ default: module.FilePreview })));
 
-export interface LiveTool {
-  key: string;
-  name: string;
-  status: "running" | "done" | "error";
-  args?: string;
-  output?: string;
-}
-
-export interface QueuedItem {
-  kind: "steer" | "followUp";
-  text: string;
-}
-
-export interface LiveSnapshot {
-  text: string;
-  thinking: string;
-  tools: LiveTool[];
-  queued: QueuedItem[] | null;
-}
-
-function emptyLiveSnapshot(): LiveSnapshot {
-  return { text: "", thinking: "", tools: [], queued: null };
-}
-
-function sessionKey(sessionId?: string): string {
-  return sessionId ? "id:" + sessionId : "unknown";
-}
-
-function storedPaneWidth(key: string, fallback: number, min: number, max: number): number {
-  try {
-    const value = Number(localStorage.getItem(key));
-    if (Number.isFinite(value)) return Math.min(max, Math.max(min, value));
-  } catch {
-    /* ignore unavailable storage */
-  }
-  return fallback;
-}
-
-function buildOneShotGoal(mainText: string, supplementalText: string): string {
-  const main = mainText.trim() || "\u6839\u636e\u672c\u6b21\u5bf9\u8bdd\u5185\u5bb9\u5b8c\u6210\u4efb\u52a1";
-  const supplemental = supplementalText.trim();
-  return [
-    `\u672c\u6b21\u957f\u65f6\u4efb\u52a1\uFF1A\n${main}`,
-    supplemental ? `\u8865\u5145\u7ea6\u675f/\u9a8c\u6536\u6807\u51c6\uFF1A\n${supplemental}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-export interface Toast {
-  id: number;
-  level: "info" | "warn" | "error" | "ok";
-  message: string;
-}
-
-export interface RenderedMessage extends ClientMessage {
-  toolResults?: Record<string, { text: string; isError: boolean }>;
-}
-
-export type PanelTab = "mcp" | "models" | "skills" | "agents" | "team" | "schedules" | "wechat" | "projects" | "archived";
+// Re-export shared types so existing component imports (from "../App") keep working.
+export type { LiveTool, QueuedItem, LiveSnapshot, Toast, RenderedMessage, PanelTab } from "./types-app";
 
 export default function App() {
-  const [state, setState] = useState<AppState | null>(null);
-  const [sessions, setSessions] = useState<SessionMeta[]>([]);
-  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
-  const [agents, setAgents] = useState<AgentProfile[]>([]);
+  const { toasts, toast } = useToasts();
+  const { theme, toggleTheme } = useTheme();
+  const { sidebarOpen, setSidebarOpen, sidebarWidth, rightPanelWidth, startResize } = useLayout();
+
   const [panel, setPanel] = useState<PanelTab | null>(null);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [bootStatus, setBootStatus] = useState<{ state: "booting" | "error" | "ready"; message?: string }>({ state: "booting" });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth("pi-studio-sidebar-width", 264, 220, 420));
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => storedPaneWidth("pi-studio-right-panel-width", 380, 280, 600));
   const [preview, setPreview] = useState<{ path: string; name: string; root?: string } | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  const [openTabFiles, setOpenTabFiles] = useState<string[]>([]);
-  const openTabsInitializedRef = useRef(false);
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    try {
-      const urlTheme = new URLSearchParams(location.search).get("theme");
-      if (urlTheme === "light" || urlTheme === "dark") return urlTheme;
-      const saved = localStorage.getItem("pi-studio-theme");
-      if (saved === "light" || saved === "dark") return saved;
-    } catch {
-      /* ignore */
-    }
-    return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  });
-
-  // Live streaming region (client-side draft, reconciled by server snapshots)
-  const [liveText, setLiveText] = useState("");
-  const [liveThinking, setLiveThinking] = useState("");
-  const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
-  const [queued, setQueued] = useState<QueuedItem[] | null>(null);
-  const [subagentsEnabled, setSubagentsEnabled] = useState(false);
-  const [goalsEnabled, setGoalsEnabled] = useState(false);
-  const [goalText, setGoalText] = useState("");
-  const [wechatStatus, setWechatStatus] = useState<WechatStatus | null>(null);
-  const [wechatQr, setWechatQr] = useState<WechatQr | null>(null);
-  const [wechatLogs, setWechatLogs] = useState<WechatLogEntry[]>([]);
-  const [oneShot, setOneShot] = useState<{ subagents: boolean; goals: boolean }>({ subagents: false, goals: false });
-  const [questions, setQuestions] = useState<AskUserQuestion[]>([]);
-  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
-
-  const socketRef = useRef<PiSocket | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const composerRef = useRef<ComposerHandle | null>(null);
-  const toastId = useRef(0);
-  const stateRef = useRef<AppState | null>(null);
-  const activeSessionKeyRef = useRef("unknown");
-  const liveBySessionRef = useRef(new Map<string, LiveSnapshot>());
-  const restoreRef = useRef<{ subagents: { enabled: boolean } | null }>({ subagents: null });
-  const subagentsEnabledRef = useRef(subagentsEnabled);
-  subagentsEnabledRef.current = subagentsEnabled;
-  const goalsEnabledRef = useRef(goalsEnabled);
-  goalsEnabledRef.current = goalsEnabled;
-  const goalTextRef = useRef(goalText);
-  goalTextRef.current = goalText;
-  const oneShotRef = useRef(oneShot);
-  oneShotRef.current = oneShot;
-  const resizeRef = useRef<{ target: "sidebar" | "right"; startX: number; startWidth: number } | null>(null);
+  const openTabsInitializedRef = useRef(false);
 
-  const startResize = useCallback((target: "sidebar" | "right", event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    resizeRef.current = {
-      target,
-      startX: event.clientX,
-      startWidth: target === "sidebar" ? sidebarWidth : rightPanelWidth,
-    };
-    document.body.classList.add("is-resizing-columns");
-  }, [rightPanelWidth, sidebarWidth]);
+  // useSessions needs `send`/`state` from useLiveSocket, while useLiveSocket needs
+  // the session setters from useSessions — break the cycle through a ref.
+  const liveRef = useRef<ReturnType<typeof useLiveSocket> | null>(null);
+  const sessionsApi = useSessions({
+    send: (msg) => liveRef.current?.sendMessage(msg),
+    toast,
+    activeSessionFile: liveRef.current?.state?.sessionFile,
+    closePanel: () => setPanel(null),
+  });
+  const live = useLiveSocket({
+    toast,
+    setSessions: sessionsApi.setSessions,
+    setWorkspaces: sessionsApi.setWorkspaces,
+    setProjects: sessionsApi.setProjects,
+  });
+  liveRef.current = live;
 
-  const stopResize = useCallback(() => {
-    resizeRef.current = null;
-    document.body.classList.remove("is-resizing-columns");
-  }, []);
-
-  useEffect(() => {
-    const onPointerMove = (event: PointerEvent) => {
-      const resize = resizeRef.current;
-      if (!resize) return;
-      const delta = event.clientX - resize.startX;
-      if (resize.target === "sidebar") {
-        setSidebarWidth(Math.min(420, Math.max(220, resize.startWidth + delta)));
-      } else {
-        setRightPanelWidth(Math.min(600, Math.max(280, resize.startWidth - delta)));
-      }
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", stopResize);
-    window.addEventListener("pointercancel", stopResize);
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", stopResize);
-      window.removeEventListener("pointercancel", stopResize);
-    };
-  }, [stopResize]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("pi-studio-sidebar-width", String(sidebarWidth));
-      localStorage.setItem("pi-studio-right-panel-width", String(rightPanelWidth));
-    } catch {
-      /* ignore unavailable storage */
-    }
-  }, [rightPanelWidth, sidebarWidth]);
-  stateRef.current = state;
-
-  const toast = useCallback((level: Toast["level"], message: string) => {
-    const id = ++toastId.current;
-    setToasts((t) => [...t.slice(-4), { id, level, message }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
-  }, []);
-
-  const syncLive = useCallback((snapshot: LiveSnapshot) => {
-    setLiveText(snapshot.text);
-    setLiveThinking(snapshot.thinking);
-    setLiveTools(snapshot.tools);
-    setQueued(snapshot.queued);
-  }, []);
-
-  const restoreOneShot = useCallback(() => {
-    const restore = restoreRef.current;
-    if (!restore.subagents) return;
-    const previous = restore.subagents;
-    restore.subagents = null;
-    setSubagentsEnabled(previous.enabled);
-    void setSubagents(previous.enabled).catch((e) => toast("error", e.message));
-  }, [toast]);
-
-  const handleEvent = useCallback(
-    (event: unknown) => {
-      const e = event as {
-        type: string;
-        sessionId?: string;
-        sessionFile?: string;
-        assistantMessageEvent?: { type: string; delta?: string; thinking?: string };
-        toolName?: string;
-        toolCallId?: string;
-        args?: unknown;
-        isError?: boolean;
-        result?: unknown;
-        content?: unknown;
-        partialResult?: unknown;
-        steering?: string[];
-        followUp?: string[];
-      };
-      const key = sessionKey(e.sessionId);
-      const activeKey = activeSessionKeyRef.current;
-      const current = liveBySessionRef.current.get(key) ?? emptyLiveSnapshot();
-      const next: LiveSnapshot = {
-        text: current.text,
-        thinking: current.thinking,
-        tools: [...current.tools],
-        queued: current.queued ? { ...current.queued } : null,
-      };
-
-      switch (e.type) {
-        case "message_update": {
-          const a = e.assistantMessageEvent;
-          if (a?.type === "text_delta") next.text += a.delta ?? "";
-          else if (a?.type === "thinking_delta") next.thinking += a.delta ?? "";
-          break;
-        }
-        case "message_end":
-          next.text = "";
-          next.thinking = "";
-          next.tools = [];
-          break;
-        case "tool_execution_start": {
-          next.tools.push({
-            key: e.toolCallId ?? (Date.now() + "-" + Math.random().toString(36).slice(2, 6)),
-            name: e.toolName ?? "tool",
-            status: "running",
-            args: formatResult(e.args),
-          });
-          break;
-        }
-        case "tool_execution_update": {
-          const toolKey = e.toolCallId;
-          const partial = e.partialResult ?? e.content;
-          if (partial !== undefined) {
-            const targetIndex = toolKey
-              ? next.tools.findIndex((tool) => tool.key === toolKey)
-              : next.tools.length - 1;
-            if (targetIndex >= 0) next.tools[targetIndex] = { ...next.tools[targetIndex], output: formatResult(partial) };
-          }
-          break;
-        }
-        case "tool_execution_end": {
-          const toolKey = e.toolCallId;
-          const targetIndex = toolKey
-            ? next.tools.findIndex((tool) => tool.key === toolKey)
-            : next.tools.length - 1;
-          if (targetIndex >= 0) {
-            next.tools[targetIndex] = {
-              ...next.tools[targetIndex],
-              status: e.isError ? "error" : "done",
-              output: formatResult(e.result),
-            };
-          }
-          break;
-        }
-        case "queue_update":
-          next.queued = [
-            ...(e.steering ?? []).map((text) => ({ kind: "steer" as const, text })),
-            ...(e.followUp ?? []).map((text) => ({ kind: "followUp" as const, text })),
-          ];
-          break;
-        case "agent_end":
-        case "agent_settled":
-          liveBySessionRef.current.set(key, emptyLiveSnapshot());
-          if (key === activeKey) {
-            restoreOneShot();
-            syncLive(emptyLiveSnapshot());
-          }
-          return;
-        case "auto_retry_start":
-          if (key === activeKey) toast("warn", "??????????...");
-          return;
-        case "compaction_start":
-          if (key === activeKey) toast("info", "??????...");
-          return;
-      }
-
-      liveBySessionRef.current.set(key, next);
-      if (key === activeKey) syncLive(next);
-    },
-    [restoreOneShot, syncLive, toast],
-  );
-
-  const applyState = useCallback((s: AppState) => {
-    const key = sessionKey(s.sessionId);
-    activeSessionKeyRef.current = key;
-    setState(s);
-    if (!s.isStreaming) {
-      liveBySessionRef.current.delete(key);
-      syncLive(emptyLiveSnapshot());
-      return;
-    }
-    const snapshot = liveBySessionRef.current.get(key) ?? emptyLiveSnapshot();
-    liveBySessionRef.current.set(key, snapshot);
-    syncLive(snapshot);
-  }, [syncLive]);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    try {
-      localStorage.setItem("pi-studio-theme", theme);
-    } catch {
-      /* ignore */
-    }
-  }, [theme]);
+  const {
+    state,
+    setState,
+    connected,
+    bootStatus,
+    agents,
+    setAgents,
+    liveText,
+    liveThinking,
+    liveTools,
+    queued,
+    goalsEnabled,
+    goalText,
+    setGoalText,
+    wechatStatus,
+    wechatQr,
+    wechatLogs,
+    oneShot,
+    setOneShot,
+    questions,
+    questionAnswers,
+    setQuestionAnswers,
+    sendMessage,
+    send,
+    steer,
+    cancelQueued,
+    editQueued,
+    sendToolCommand,
+    sendWechatCommand,
+    retryInitialization,
+    answerQuestion,
+  } = live;
+  const {
+    sessions,
+    setProjects,
+    projects,
+    archivedSessions,
+    openTabFiles,
+    setOpenTabFiles,
+    refreshSessions,
+    refreshArchived,
+    handleDeleteSession,
+    handleArchiveSession,
+    handleRestoreArchived,
+    handleDeleteArchived,
+    assignSession,
+    newProjectSession,
+    deleteProject,
+    archiveProject,
+    switchSession,
+    newSession,
+    closeTab,
+  } = sessionsApi;
 
   // Close the file preview when the workspace changes (paths become stale).
   useEffect(() => {
     setPreview(null);
   }, [state?.cwd]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === "dark" ? "light" : "dark"));
-  }, []);
-
-  useEffect(() => {
-    const socket = new PiSocket();
-    socketRef.current = socket;
-
-    const off = socket.on((msg) => {
-      switch (msg.type) {
-        case "ready":
-          setConnected(true);
-          setBootStatus({ state: "ready" });
-          applyState(msg.state);
-          if (msg.sessions) setSessions(msg.sessions);
-          if (msg.workspaces) setWorkspaces(msg.workspaces);
-          void listProjects().then(setProjects).catch(() => {});
-          void Promise.all([
-            getSubagents().then((v) => setSubagentsEnabled(v.enabled)).catch(() => {}),
-            getGoals().then((v) => { setGoalsEnabled(v.enabled); setGoalText(v.goal); }).catch(() => {}),
-            listAgents().then((result) => setAgents(result.agents)).catch(() => {}),
-          ]);
-          break;
-        case "initial_state":
-          setSessions(msg.sessions);
-          setWorkspaces(msg.workspaces);
-          break;
-        case "state":
-          applyState(msg.state);
-          break;
-        case "event":
-          handleEvent(msg.event);
-          break;
-        case "mcp_status":
-          setState((s) => (s ? { ...s, mcp: msg.snapshot as McpStatusSnapshot } : s));
-          break;
-        case "sessions":
-          setSessions(msg.sessions);
-          break;
-        case "workspaces":
-          setWorkspaces(msg.workspaces);
-          break;
-        case "log":
-          toast(msg.level === "error" ? "error" : msg.level === "warn" ? "warn" : "info", msg.message);
-          break;
-        case "error":
-          toast("error", msg.message);
-          break;
-        case "booting":
-          setConnected(false);
-          setBootStatus({ state: "booting", message: msg.message ?? msg.phase });
-          break;
-        case "boot_error":
-          setConnected(false);
-          setBootStatus({ state: "error", message: msg.message });
-          break;
-        case "ask_user":
-          setQuestions((prev) => prev.some((q) => q.id === msg.question.id) ? prev : [...prev, msg.question]);
-          break;
-        case "wechat_status":
-          setWechatStatus(msg.status);
-          if (msg.status.phase === "connected" || msg.status.phase === "idle") setWechatQr(null);
-          break;
-        case "wechat_qr":
-          setWechatQr(msg.qr);
-          break;
-        case "wechat_log":
-          setWechatLogs((logs) => [...logs.slice(-199), msg.entry]);
-          break;
-      }
-    });
-
-    socket.connect();
-    // Optional deep-link: ?session=<absolute session file path>
-    const deepLink = new URLSearchParams(location.search).get("session");
-    if (deepLink) {
-      const t = window.setTimeout(() => socket.send({ type: "switch_session", file: deepLink }), 800);
-      return () => {
-        window.clearTimeout(t);
-        off();
-        socket.close();
-      };
-    }
-    return () => {
-      off();
-      socket.close();
-    };
-  }, [applyState, handleEvent, toast]);
-
-  const retryInitialization = useCallback(async () => {
-    setBootStatus({ state: "booting", message: "Retrying AI engine initialization" });
-    try {
-      await retryBoot();
-      socketRef.current?.close();
-      socketRef.current?.connect();
-    } catch (error) {
-      setBootStatus({ state: "error", message: (error as Error).message });
-    }
-  }, []);
-
-  const refreshSessions = useCallback(async () => {
-    try {
-      setSessions(await listSessions());
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const refreshArchived = useCallback(async () => {
-    try {
-      setArchivedSessions(await listArchivedSessions());
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   useEffect(() => {
     if (panel === "archived") void refreshArchived();
@@ -471,166 +131,6 @@ export default function App() {
     setOpenTabFiles((prev) => (prev.includes(file) ? prev : [...prev, file]));
   }, [state?.sessionFile]);
 
-  const handleDeleteSession = useCallback(async (file: string) => {
-    try {
-      const result = await deleteSessionApi(file);
-      setOpenTabFiles((prev) => prev.filter((f) => f !== file));
-      await refreshSessions();
-      setProjects(await listProjects());
-      if (result.activeFile && result.activeFile !== state?.sessionFile) {
-        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
-      }
-      toast("ok", "对话已删除");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [refreshSessions, state?.sessionFile, toast]);
-
-  const handleArchiveSession = useCallback(async (file: string) => {
-    try {
-      const result = await archiveSessionApi(file);
-      setOpenTabFiles((prev) => prev.filter((f) => f !== file));
-      await refreshSessions();
-      await refreshArchived();
-      setProjects(await listProjects());
-      if (result.activeFile && result.activeFile !== state?.sessionFile) {
-        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
-      }
-      toast("ok", "对话已归档");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [refreshSessions, refreshArchived, state?.sessionFile, toast]);
-
-  const handleRestoreArchived = useCallback(async (file: string) => {
-    try {
-      await restoreSessionApi(file);
-      await refreshArchived();
-      await refreshSessions();
-      setProjects(await listProjects());
-      toast("ok", "对话已还原");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [refreshArchived, refreshSessions, toast]);
-
-  const handleDeleteArchived = useCallback(async (file: string) => {
-    try {
-      const result = await deleteArchivedSessionApi(file);
-      await refreshArchived();
-      await refreshSessions();
-      setProjects(await listProjects());
-      if (result.activeFile && result.activeFile !== state?.sessionFile) {
-        socketRef.current?.send({ type: "switch_session", file: result.activeFile });
-      }
-      toast("ok", "已删除归档对话");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [refreshArchived, refreshSessions, state?.sessionFile, toast]);
-
-  const assignSession = useCallback(async (file: string, projectId: string | null) => {
-    try {
-      if (projectId) await assignSessionToProject(projectId, file);
-      else {
-        const current = sessions.find((session) => session.file === file);
-        if (current?.projectId) await removeSessionFromProject(current.projectId, file);
-      }
-      setSessions(await listSessions());
-      setProjects(await listProjects());
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [sessions, toast]);
-
-  const newProjectSession = useCallback((projectId: string) => {
-    socketRef.current?.send({ type: "new_session", projectId });
-  }, []);
-
-  const deleteProject = useCallback(async (projectId: string) => {
-    try {
-      await removeProject(projectId);
-      setProjects(await listProjects());
-      await refreshSessions();
-      toast("ok", "项目已删除");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [refreshSessions, toast]);
-
-  const send = useCallback(
-    async (text: string, attachments?: AttachmentInfo[], refs?: string[]) => {
-      const one = oneShotRef.current;
-      const longGoal = one.goals ? buildOneShotGoal(text, goalTextRef.current) : undefined;
-      try {
-        if (one.subagents && !subagentsEnabledRef.current) {
-          restoreRef.current.subagents = { enabled: subagentsEnabledRef.current };
-          await setSubagents(true);
-          setSubagentsEnabled(true);
-        }
-      } catch (e) {
-        toast("error", (e as Error).message);
-        return;
-      }
-      if (one.subagents || one.goals) setOneShot({ subagents: false, goals: false });
-      socketRef.current?.send({ type: "prompt", text, attachments, refs, longGoal });
-    },
-    [toast],
-  );
-
-  const saveMessageAsMemory = useCallback(async (message: RenderedMessage) => {
-    const projectId = state?.project?.id;
-    if (!projectId) {
-      toast("warn", "请先将当前会话加入项目");
-      return;
-    }
-    const content = message.text.trim();
-    if (!content) {
-      toast("warn", "当前消息没有可保存的文本");
-      return;
-    }
-    try {
-      await saveProjectMemory(projectId, {
-        content,
-        type: "summary",
-        pinned: false,
-        sourceSessionId: state?.sessionId,
-      });
-      toast("ok", "消息已保存为项目记忆");
-    } catch (error) {
-      toast("error", (error as Error).message);
-    }
-  }, [state?.project?.id, state?.sessionId, toast]);
-
-  const steer = useCallback((text: string) => {
-    if (!text.trim()) return;
-    socketRef.current?.send({ type: "steer", text: text.trim() });
-  }, []);
-
-  const cancelQueued = useCallback((kind: "steer" | "followUp", text: string) => {
-    socketRef.current?.send({ type: "cancel_queue_item", kind, text });
-  }, []);
-
-  const editQueued = useCallback((kind: "steer" | "followUp", oldText: string, newText: string) => {
-    const text = newText.trim();
-    if (!text || text === oldText) return;
-    socketRef.current?.send({ type: "edit_queue_item", kind, oldText, newText: text });
-  }, []);
-
-  const sendToolCommand = useCallback((command: string) => {
-    socketRef.current?.send({ type: "mcp_command", command });
-  }, []);
-
-  const sendWechatCommand = useCallback((action: WechatCommandAction) => {
-    socketRef.current?.send({ type: "wechat_command", action });
-  }, []);
-
-  const switchSession = useCallback((file: string) => {
-    socketRef.current?.send({ type: "switch_session", file });
-    setOpenTabFiles((prev) => (prev.includes(file) ? prev : [...prev, file]));
-    setPanel(null);
-  }, []);
-
   const handlePickFile = useCallback((relPath: string, _name: string) => {
     composerRef.current?.insertText(`@${relPath}`);
   }, []);
@@ -641,27 +141,32 @@ export default function App() {
     setFolderPickerOpen(false);
   }, []);
 
-  const newSession = useCallback(() => {
-    socketRef.current?.send({ type: "new_session" });
-  }, []);
-
-  const closeTab = useCallback((file: string) => {
-    const next = openTabFiles.filter((f) => f !== file);
-    setOpenTabFiles(next);
-    if (state?.sessionFile !== file) return;
-    const fallback = next[0] ?? sessions.find((s) => s.file !== file)?.file;
-    if (fallback) switchSession(fallback);
-    else newSession();
-  }, [openTabFiles, sessions, state?.sessionFile, switchSession, newSession]);
-
-  const switchWorkspace = useCallback((path: string) => {
-    socketRef.current?.send({ type: "switch_workspace", path });
-    setPanel(null);
-  }, []);
-
-  const addWorkspace = useCallback((path: string) => {
-    socketRef.current?.send({ type: "add_workspace", path });
-  }, []);
+  const saveMessageAsMemory = useCallback(
+    async (message: RenderedMessage) => {
+      const projectId = state?.project?.id;
+      if (!projectId) {
+        toast("warn", "请先将当前会话加入项目");
+        return;
+      }
+      const content = message.text.trim();
+      if (!content) {
+        toast("warn", "当前消息没有可保存的文本");
+        return;
+      }
+      try {
+        await saveProjectMemory(projectId, {
+          content,
+          type: "summary",
+          pinned: false,
+          sourceSessionId: state?.sessionId,
+        });
+        toast("ok", "消息已保存为项目记忆");
+      } catch (error) {
+        toast("error", (error as Error).message);
+      }
+    },
+    [state?.project?.id, state?.sessionId, toast],
+  );
 
   // fold tool results into the assistant message that owns the tool call
   const renderedMessages = useMemoMessages(state?.messages ?? []);
@@ -682,8 +187,8 @@ export default function App() {
       />
       <LongTaskQueue
         tasks={state?.longTasks ?? []}
-        onCancel={(id) => socketRef.current?.send({ type: "cancel_long_task", id })}
-        onClear={() => socketRef.current?.send({ type: "clear_long_tasks" })}
+        onCancel={(id) => sendMessage({ type: "cancel_long_task", id })}
+        onClear={() => sendMessage({ type: "clear_long_tasks" })}
       />
       <Composer
         ref={composerRef}
@@ -695,8 +200,8 @@ export default function App() {
         onSend={send}
         onPickFolder={() => setFolderPickerOpen(true)}
         onSteer={steer}
-        onAbort={() => socketRef.current?.send({ type: "abort" })}
-        onSetModel={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
+        onAbort={() => sendMessage({ type: "abort" })}
+        onSetModel={(provider, id) => sendMessage({ type: "set_model", provider, id })}
         onSetAgent={(id) => {
           void setActiveAgent(id).catch((e) => toast("error", e.message));
         }}
@@ -705,21 +210,16 @@ export default function App() {
         onTaskModeChange={(next) => setOneShot(next)}
         goalText={goalText}
         onGoalTextChange={setGoalText}
-        onSaveGoalText={(goal) => void setGoals(goalsEnabled, goal).then((v) => { setGoalText(v.goal); }).catch((e) => toast("error", e.message))}
+        onSaveGoalText={(goal) =>
+          void setGoals(goalsEnabled, goal)
+            .then((v) => {
+              setGoalText(v.goal);
+            })
+            .catch((e) => toast("error", e.message))
+        }
       />
     </>
   );
-  const answerQuestion = (id: string, answer: string) => {
-    const text = answer.trim();
-    if (!text) return;
-    socketRef.current?.send({ type: "ask_user_answer", id, answer: text });
-    setQuestions((prev) => prev.filter((q) => q.id !== id));
-    setQuestionAnswers((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  };
 
   return (
     <div
@@ -732,7 +232,11 @@ export default function App() {
             <div className="boot-indicator" aria-hidden="true" />
             <strong>{bootStatus.state === "error" ? "AI 引擎初始化失败" : "AI 引擎初始化中"}</strong>
             <span>{bootStatus.message || "正在准备本地运行环境"}</span>
-            {bootStatus.state === "error" && <button className="btn primary" onClick={() => void retryInitialization()}>重试</button>}
+            {bootStatus.state === "error" && (
+              <button className="btn primary" onClick={() => void retryInitialization()}>
+                重试
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -743,7 +247,6 @@ export default function App() {
           sessions={sessions}
           projects={projects}
           selectedProjectId={selectedProjectId}
-          workspaces={workspaces}
           connected={connected}
           wechatStatus={wechatStatus}
           theme={theme}
@@ -754,19 +257,24 @@ export default function App() {
           onSwitchSession={switchSession}
           onDeleteSession={handleDeleteSession}
           onArchiveSession={handleArchiveSession}
-          onProjectSelect={setSelectedProjectId}
+          onSelectProject={setSelectedProjectId}
           onManageProjects={() => setPanel("projects")}
           onNewProjectSession={newProjectSession}
-          onDeleteProject={(projectId) => void deleteProject(projectId)}
+          onDeleteProject={(projectId) => {
+            setSelectedProjectId((cur) => (cur === projectId ? null : cur));
+            void deleteProject(projectId);
+          }}
+          onArchiveProject={(projectId) => {
+            setSelectedProjectId((cur) => (cur === projectId ? null : cur));
+            void archiveProject(projectId);
+          }}
           onAssignSession={(file, projectId) => void assignSession(file, projectId)}
-          onSwitchWorkspace={switchWorkspace}
-          onAddWorkspace={addWorkspace}
           onPickFile={handlePickFile}
           onPickDir={handlePickDir}
           onPreviewFile={(path, name, root) => setPreview({ path, name, root })}
           onCollapse={() => setSidebarOpen(false)}
           onRefreshSessions={() => void refreshSessions()}
-          onSetThinking={(level) => socketRef.current?.send({ type: "set_thinking", level })}
+          onSetThinking={(level) => sendMessage({ type: "set_thinking", level })}
         />
       ) : (
         <button className="sidebar-rail" title="展开侧栏" onClick={() => setSidebarOpen(true)}>
@@ -786,10 +294,11 @@ export default function App() {
       <div className={`main ${isEmpty ? "has-empty" : ""}`}>
         <div className="main-header">
           <span className="main-title">Pi Studio</span>
+          <span className="version-badge">v{import.meta.env.VITE_APP_VERSION}</span>
           {state?.piVersion && <span className="version-badge">Pi v{state.piVersion}</span>}
           <span className="main-sub">
             {state?.model?.displayName ?? ""}
-            {state?.cwd ? ` · ${state.cwd.split(/[\\/]/).pop()}` : ""}
+            {" · "}{projects.find((p) => p.id === selectedProjectId)?.name ?? "临时对话"}
           </span>
         </div>
         <div className="session-tabs" role="tablist" aria-label="打开的会话">
@@ -822,89 +331,95 @@ export default function App() {
               </button>
             );
           })}
-          <button className="session-tab session-tab-new" onClick={newSession} title="新建会话">＋</button>
+          <button className="session-tab session-tab-new" onClick={newSession} title="新建会话">
+            ＋
+          </button>
         </div>
         {isEmpty ? <div className="main-center">{mainContent}</div> : mainContent}
       </div>
       {(panel || preview) && (
         <div
-            className="pane-resizer right-resizer"
-            role="separator"
-            aria-label="调整右侧面板宽度"
-            aria-orientation="vertical"
-            onPointerDown={(event) => startResize("right", event)}
-            title="拖动调整右侧面板宽度"
-          />
+          className="pane-resizer right-resizer"
+          role="separator"
+          aria-label="调整右侧面板宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => startResize("right", event)}
+          title="拖动调整右侧面板宽度"
+        />
       )}
       {panel && (
         <Suspense fallback={<div className="right-panel panel-loading">加载面板中…</div>}>
-      {panel === "mcp" && (
-        <div className="right-panel">
-          <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />
-        </div>
-      )}
-      {panel === "models" && (
-        <div className="right-panel">
-          <ModelsPanel
-            current={state?.model ? { provider: state.model.provider, id: state.model.id } : null}
-            onSelect={(provider, id) => socketRef.current?.send({ type: "set_model", provider, id })}
-            onClose={() => setPanel(null)}
-            onToast={toast}
-          />
-        </div>
-      )}
-      {panel === "skills" && (
-        <div className="right-panel">
-          <SkillsPanel onClose={() => setPanel(null)} onToast={toast} />
-        </div>
-      )}
-      {panel === "agents" && (
-        <div className="right-panel">
-          <AgentsPanel
-            activeAgentId={state?.activeAgent?.id}
-            onActiveChange={(agent) => setState((current) => (current ? { ...current, activeAgent: agent } : current))}
-            onAgentsChange={setAgents}
-            onClose={() => setPanel(null)}
-            onToast={toast}
-          />
-        </div>
-      )}
-      {panel === "team" && (
-        <div className="right-panel team-right-panel">
-          <TeamPanel onClose={() => setPanel(null)} onToast={toast} />
-        </div>
-      )}
-      {panel === "schedules" && <div className="right-panel"><SchedulesPanel agents={agents} onClose={() => setPanel(null)} onToast={toast} /></div>}
-      {panel === "wechat" && (
-        <div className="right-panel wechat-right-panel">
-          <WechatPanel status={wechatStatus} qr={wechatQr} logs={wechatLogs} onCommand={sendWechatCommand} onClose={() => setPanel(null)} />
-        </div>
-      )}
-      {panel === "projects" && (
-        <div className="right-panel">
-          <ProjectsPanel
-            projects={projects}
-            currentSessionFile={state?.sessionFile}
-            currentProjectId={state?.project?.id ?? null}
-            onProjectsChange={setProjects}
-            onStateRefresh={() => void refreshSessions()}
-            onSessionSelect={switchSession}
-            onClose={() => setPanel(null)}
-            onToast={toast}
-          />
-        </div>
-      )}
-      {panel === "archived" && (
-        <div className="right-panel">
-          <ArchivedSessionsPanel
-            sessions={archivedSessions}
-            onRestore={(file) => void handleRestoreArchived(file)}
-            onDelete={(file) => void handleDeleteArchived(file)}
-            onClose={() => setPanel(null)}
-          />
-        </div>
-      )}
-          </Suspense>
+          {panel === "mcp" && (
+            <div className="right-panel">
+              <McpPanel mcp={state?.mcp ?? null} onCommand={sendToolCommand} onClose={() => setPanel(null)} onToast={toast} />
+            </div>
+          )}
+          {panel === "models" && (
+            <div className="right-panel">
+              <ModelsPanel
+                current={state?.model ? { provider: state.model.provider, id: state.model.id } : null}
+                onSelect={(provider, id) => sendMessage({ type: "set_model", provider, id })}
+                onClose={() => setPanel(null)}
+                onToast={toast}
+              />
+            </div>
+          )}
+          {panel === "skills" && (
+            <div className="right-panel">
+              <SkillsPanel onClose={() => setPanel(null)} onToast={toast} />
+            </div>
+          )}
+          {panel === "agents" && (
+            <div className="right-panel">
+              <AgentsPanel
+                activeAgentId={state?.activeAgent?.id}
+                onActiveChange={(agent) => setState((current) => (current ? { ...current, activeAgent: agent } : current))}
+                onAgentsChange={setAgents}
+                onClose={() => setPanel(null)}
+                onToast={toast}
+              />
+            </div>
+          )}
+          {panel === "team" && (
+            <div className="right-panel team-right-panel">
+              <TeamPanel onClose={() => setPanel(null)} onToast={toast} />
+            </div>
+          )}
+          {panel === "schedules" && (
+            <div className="right-panel">
+              <SchedulesPanel agents={agents} onClose={() => setPanel(null)} onToast={toast} />
+            </div>
+          )}
+          {panel === "wechat" && (
+            <div className="right-panel wechat-right-panel">
+              <WechatPanel status={wechatStatus} qr={wechatQr} logs={wechatLogs} onCommand={sendWechatCommand} onClose={() => setPanel(null)} />
+            </div>
+          )}
+          {panel === "projects" && (
+            <div className="right-panel">
+              <ProjectsPanel
+                projects={projects}
+                currentSessionFile={state?.sessionFile}
+                currentProjectId={state?.project?.id ?? null}
+                onProjectsChange={setProjects}
+                onStateRefresh={() => void refreshSessions()}
+                onSessionSelect={switchSession}
+                onClose={() => setPanel(null)}
+                onToast={toast}
+              />
+            </div>
+          )}
+          {panel === "archived" && (
+            <div className="right-panel">
+              <ArchivedSessionsPanel
+                sessions={archivedSessions}
+                onRestore={(file) => void handleRestoreArchived(file)}
+                onDelete={(file) => void handleDeleteArchived(file)}
+                onClose={() => setPanel(null)}
+              />
+            </div>
+          )}
+        </Suspense>
       )}
       {preview && (
         <Suspense fallback={<div className="right-panel panel-loading">加载面板中…</div>}>
@@ -931,11 +446,17 @@ export default function App() {
                 <div className="ask-user-kicker">
                   {question.sessionName ? `会话 ${question.sessionName}` : "Agent 需要确认"}
                 </div>
-                <div className="ask-user-question"><Markdown text={question.question} /></div>
+                <div className="ask-user-question">
+                  <Markdown text={question.question} />
+                </div>
                 {question.options.length > 0 && (
                   <div className="ask-user-options">
                     {question.options.map((option, index) => (
-                      <button key={`${option.label}-${index}`} className="ask-user-option" onClick={() => answerQuestion(question.id, option.label)}>
+                      <button
+                        key={`${option.label}-${index}`}
+                        className="ask-user-option"
+                        onClick={() => answerQuestion(question.id, option.label)}
+                      >
                         <strong>{option.label}</strong>
                         {option.description && <small>{option.description}</small>}
                       </button>
@@ -949,9 +470,17 @@ export default function App() {
                     value={questionAnswers[question.id] ?? ""}
                     placeholder="输入你的回答…"
                     onChange={(e) => setQuestionAnswers((prev) => ({ ...prev, [question.id]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === "Enter") answerQuestion(question.id, questionAnswers[question.id] ?? ""); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") answerQuestion(question.id, questionAnswers[question.id] ?? "");
+                    }}
                   />
-                  <button className="btn primary" disabled={!(questionAnswers[question.id] ?? "").trim()} onClick={() => answerQuestion(question.id, questionAnswers[question.id] ?? "")}>提交</button>
+                  <button
+                    className="btn primary"
+                    disabled={!(questionAnswers[question.id] ?? "").trim()}
+                    onClick={() => answerQuestion(question.id, questionAnswers[question.id] ?? "")}
+                  >
+                    提交
+                  </button>
                 </div>
               </div>
             ))}
@@ -967,38 +496,4 @@ export default function App() {
       </div>
     </div>
   );
-}
-
-function formatResult(result: unknown): string | undefined {
-  if (result == null) return undefined;
-  if (typeof result === "string") return result;
-  try {
-    return JSON.stringify(result, null, 2);
-  } catch {
-    return String(result);
-  }
-}
-
-function useMemoMessages(messages: ClientMessage[]): RenderedMessage[] {
-  // attach toolResult messages to their owning assistant toolCall (as output)
-  const results = new Map<string, { text: string; isError: boolean }>();
-  for (const m of messages) {
-    if (m.role === "toolResult" && m.toolCallId) {
-      results.set(m.toolCallId, { text: m.text, isError: !!m.isError });
-    }
-  }
-
-  return messages
-    .filter((m) => m.role !== "toolResult")
-    .map((m) => {
-      if (m.role === "assistant" && m.toolCalls?.length) {
-        const toolResults: Record<string, { text: string; isError: boolean }> = {};
-        for (const c of m.toolCalls) {
-          const r = results.get(c.id);
-          if (r) toolResults[c.id] = r;
-        }
-        return { ...m, toolResults };
-      }
-      return { ...m };
-    });
 }

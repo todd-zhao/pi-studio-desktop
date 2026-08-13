@@ -38,8 +38,21 @@ export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEd
     setStickBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   };
 
+  const jumpToStart = () => {
+    ref.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const jumpToEnd = () => {
+    const el = ref.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
   return (
     <div className="chat" ref={ref} onScroll={onScroll}>
+      {!showEmpty && (
+        <div className="chat-jump-top-wrap">
+          <button type="button" className="chat-jump-btn chat-jump-top" title="跳到对话开头" onClick={jumpToStart}>↑</button>
+        </div>
+      )}
       <div className="chat-inner">
         {showEmpty && (
           <div className="chat-empty">
@@ -156,6 +169,12 @@ export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEd
           </div>
         )}
       </div>
+
+      {!showEmpty && (
+        <div className="chat-jump-bottom-wrap">
+          <button type="button" className="chat-jump-btn chat-jump-bottom" title="跳到对话结尾" onClick={jumpToEnd}>↓</button>
+        </div>
+      )}
     </div>
   );
 }

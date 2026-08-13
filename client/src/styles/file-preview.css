@@ -1,0 +1,234 @@
+/* -------------------------------------------------------- file preview */
+
+.preview-panel {
+  width: var(--right-panel-width, min(440px, 34vw));
+  min-width: var(--right-panel-width, 300px);
+  flex: 0 0 var(--right-panel-width, min(440px, 34vw));
+  background: var(--bg-2);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: preview-in 0.18s ease;
+}
+
+.preview-panel.closing {
+  animation: none;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+@keyframes preview-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.preview-name {
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.preview-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.preview-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--code-text);
+}
+
+.preview-md {
+  font-size: 13px;
+}
+
+/* parsed Office documents */
+.preview-doc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.preview-doc h1 {
+  font-size: 20px;
+  margin: 14px 0 6px;
+}
+.preview-doc h2 {
+  font-size: 17px;
+  margin: 12px 0 6px;
+}
+.preview-doc h3 {
+  font-size: 15px;
+  margin: 10px 0 4px;
+}
+.preview-doc p {
+  margin: 6px 0;
+}
+.preview-doc ul,
+.preview-doc ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.preview-doc img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+.preview-doc table,
+.data-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+.preview-doc table th,
+.preview-doc table td,
+.data-table th,
+.data-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  word-break: break-word;
+}
+.preview-doc table th,
+.data-table th {
+  background: var(--bg-3);
+  font-weight: 600;
+}
+
+/* pptx slides */
+.preview-pptx .pptx-slide {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.preview-pptx .pptx-slide-title {
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.preview-pptx .pptx-line {
+  margin: 4px 0;
+}
+.preview-pptx .pptx-empty {
+  color: var(--text-3);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.xlsx-sheet {
+  margin-bottom: 14px;
+}
+
+.xlsx-sheet-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+
+.preview-truncated-inline {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 4px;
+}
+
+.preview-truncated {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -12px -14px 10px;
+  padding: 6px 14px;
+  background: rgba(251, 191, 36, 0.12);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--yellow);
+  font-size: 12px;
+}
+
+.preview-img {
+  display: flex;
+  justify-content: center;
+}
+
+.preview-img img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.preview-pdf {
+  width: 100%;
+  height: 100%;
+  min-height: 62vh;
+  border: none;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.preview-html {
+  width: 100%;
+  height: 100%;
+  min-height: 62vh;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.preview-binary {
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.preview-binary .preview-meta {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-3);
+  margin-top: 4px;
+}
+

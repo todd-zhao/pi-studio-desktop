@@ -5,6 +5,8 @@ import type {
   WechatStatus,
 } from "../types";
 
+import { PanelShell } from "./PanelShell";
+
 interface Props {
   status: WechatStatus | null;
   qr: WechatQr | null;
@@ -40,13 +42,7 @@ export function WechatPanel({ status, qr, logs, onCommand, onClose }: Props) {
 
   return (
     <div className="wechat-panel">
-      <div className="wechat-head">
-        <div>
-          <div className="panel-title">微信对话</div>
-          <div className="panel-sub">手机微信直连 Pi</div>
-        </div>
-        <button className="icon-btn" title="关闭" onClick={onClose}>×</button>
-      </div>
+      <PanelShell variant="wechat" title="微信对话" subtitle="手机微信直连 Pi" onClose={onClose} />
 
       <div className="wechat-body">
         <div className={`wechat-status wechat-status-${phase}`}>

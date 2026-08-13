@@ -1,0 +1,102 @@
+/* ------------------------------------------------------------------ chat */
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.chat-inner {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 30px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.empty-state {
+  margin: auto;
+  text-align: center;
+  color: var(--text-3);
+  max-width: 420px;
+  padding: 40px 20px;
+}
+
+.empty-state h1 {
+  font-size: 22px;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+
+.empty-state .hint {
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.chat-empty {
+  min-height: 2px;
+}
+
+/* Sticky zero-height wrappers pin the jump buttons to the chat viewport.
+   The buttons stay absolutely positioned inside, so the visuals are unchanged.
+   (position: absolute directly on children of the scroll container would
+   scroll away with the content; sticky is what keeps them glued.) */
+.chat-jump-top-wrap,
+.chat-jump-bottom-wrap {
+  position: sticky;
+  width: 100%;
+  height: 0;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.chat-jump-top-wrap {
+  top: 0;
+}
+
+.chat-jump-bottom-wrap {
+  bottom: 0;
+}
+
+.chat-jump-btn {
+  appearance: none;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-jump-top {
+  top: 12px;
+}
+
+.chat-jump-bottom {
+  bottom: 12px;
+}
+
+.chat-jump-btn:hover {
+  background: var(--bg-4);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+

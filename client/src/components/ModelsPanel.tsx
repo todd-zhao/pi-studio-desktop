@@ -8,6 +8,8 @@ import {
   unregisterModelProvider,
 } from "../api";
 import type { ModelCatalogEntry } from "../types";
+import { PanelShell } from "./PanelShell";
+import { usePanel } from "../hooks/usePanel";
 
 interface Props {
   current: { provider: string; id: string } | null;
@@ -22,7 +24,7 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
   const [catalog, setCatalog] = useState<ModelCatalogEntry[] | null>(null);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = usePanel(onToast);
 
   // register form
   const [regMode, setRegMode] = useState<"form" | "json">("form");
@@ -108,9 +110,8 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
     return { name: n, config: c as Record<string, unknown> };
   };
 
-  const register = async () => {
-    setBusy(true);
-    try {
+  const register = () => {
+    run(async () => {
       const { name: n, config: c } = regMode === "form" ? buildConfigFromForm() : parseJson();
       if (!n) throw new Error("请填写提供方名称");
       const res = await registerModelProvider(n, c);
@@ -121,84 +122,55 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
       setJsonText("");
       setApiKey("");
       await refresh();
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const unregister = async (n: string) => {
+  const unregister = (n: string) => {
     if (!window.confirm(`确定注销提供方「${n}」？此操作会从 models.json 中删除该配置。`)) return;
-    setBusy(true);
-    try {
+    run(async () => {
       const res = await unregisterModelProvider(n);
       if (res.errors?.length) onToast("warn", `已注销，但刷新有告警: ${res.errors.join("；")}`);
       else onToast("ok", `已注销提供方: ${n}`);
       await refresh();
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const saveApiKey = async () => {
+  const saveApiKey = () => {
     if (!keyProvider) return;
     if (!keyValue.trim()) {
       onToast("warn", "请输入 API Key");
       return;
     }
-    setBusy(true);
-    try {
+    run(async () => {
       await setProviderApiKey(keyProvider, keyValue.trim());
       onToast("ok", `已为 ${keyProvider} 保存 API Key`);
       setKeyValue("");
       await refresh();
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const clearApiKey = async () => {
+  const clearApiKey = () => {
     if (!keyProvider) return;
     if (!window.confirm(`清除 ${keyProvider} 的运行时 API Key？`)) return;
-    setBusy(true);
-    try {
+    run(async () => {
       await removeProviderApiKey(keyProvider);
       onToast("ok", `已清除 ${keyProvider} 的 API Key`);
       await refresh();
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   return (
-    <div className="panel-body" style={{ overflowY: "auto", flex: 1 }}>
-      <div className="panel-tabs" style={{ margin: "-12px -12px 10px", padding: "0 12px", borderBottom: "1px solid var(--border)" }}>
-        <span className="panel-title" style={{ lineHeight: "36px" }}>
-          模型管理
-        </span>
-        <span className="panel-sub" style={{ marginLeft: "8px", lineHeight: "36px" }}>
-          注册 / 注销 / 切换
-        </span>
-        <button
-          className="mini-btn"
-          style={{ marginLeft: "auto", marginTop: "8px" }}
-          onClick={() => void refresh()}
-          title="重新加载模型目录"
-        >
+    <PanelShell
+      variant="tabs"
+      title="模型管理"
+      subtitle="注册 / 注销 / 切换"
+      actions={
+        <button className="mini-btn" onClick={() => void refresh()} title="重新加载模型目录">
           ↻ 刷新
         </button>
-        <button className="icon-btn" title="关闭" onClick={onClose}>
-          »
-        </button>
-      </div>
-
+      }
+      onClose={onClose}
+    >
       {false && <>
       {/* ------------------------------------------------- available models */}
       <div className="panel-title">可用模型</div>
@@ -248,6 +220,13 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
         </details>
       ))}
       </>}
+
+      {!loading && catalog && !catalog.some((p) => p.models.some((m) => m.available)) && (
+        <div className="settings-warning" style={{ marginTop: "8px" }}>
+          <span>未检测到可用模型，当前对话无法使用模型。</span>
+          <span>请在下方「API Key」为提供方配置密钥，或在「注册自定义模型」中添加本地模型（如 Ollama）。</span>
+        </div>
+      )}
 
       {/* --------------------------------------------------- api key */}
       <div className="panel-title" style={{ marginTop: "12px" }}>
@@ -353,6 +332,6 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
           </button>
         </div>
       )}
-    </div>
+    </PanelShell>
   );
 }

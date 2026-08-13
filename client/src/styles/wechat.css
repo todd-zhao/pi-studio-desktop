@@ -1,0 +1,604 @@
+/* ------------------------------------------------------------- wechat panel */
+
+.wechat-right-panel {
+  width: min(430px, 40vw);
+  min-width: 340px;
+}
+
+.wechat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wechat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.wechat-head .icon-btn {
+  margin-left: auto;
+}
+
+.wechat-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.wechat-status {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  padding: 10px 12px;
+}
+
+.wechat-status-connected {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.wechat-status-error {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.wechat-status-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.wechat-status-top strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.wechat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+
+.wechat-dot-connecting,
+.wechat-dot-qr {
+  background: var(--yellow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 18%, transparent);
+}
+
+.wechat-dot-scanned,
+.wechat-dot-connected {
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.wechat-dot-expired {
+  background: var(--yellow);
+}
+
+.wechat-dot-error {
+  background: var(--red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
+}
+
+.wechat-account {
+  margin-left: auto;
+  font: 11px/1.4 var(--mono);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.wechat-time {
+  color: var(--text-3);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.wechat-status-msg {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-word;
+}
+
+.wechat-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wechat-actions .btn {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.wechat-danger {
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.wechat-qr-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.wechat-qr-card img {
+  width: 220px;
+  height: 220px;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.wechat-qr-hint {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.wechat-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wechat-log-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.wechat-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: 380px;
+}
+
+.wechat-log-empty {
+  color: var(--text-3);
+  font-size: 12px;
+  padding: 18px 0;
+  text-align: center;
+}
+
+.wechat-log-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  padding: 8px 10px;
+}
+
+.wechat-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.wechat-log-dir {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.wechat-log-dir-in {
+  color: var(--green);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.wechat-log-dir-out {
+  color: var(--blue);
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+.wechat-log-dir-system {
+  color: var(--yellow);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.wechat-log-time {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.wechat-log-text {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+@media (max-width: 900px) {
+  .wechat-right-panel {
+    width: min(360px, 48vw);
+    min-width: 300px;
+  }
+}
+
+@media (max-width: 680px) {
+  .wechat-right-panel {
+    width: min(360px, 88vw);
+    min-width: 0;
+  }
+}
+
+.panel-loading { display: grid; place-items: center; color: var(--muted); min-width: 280px; }
+
+
+/* Project search, document indexing, and session actions */
+.session-delete-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 12px;
+}
+
+.session-item:hover .session-delete-btn,
+.session-delete-btn.confirming {
+  opacity: 1;
+}
+
+.session-delete-btn.confirming {
+  color: var(--red);
+}
+
+.session-archive-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.session-item:hover .session-archive-btn {
+  opacity: 1;
+}
+
+.session-archive-btn:hover {
+  color: var(--text);
+}
+
+.session-move-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.session-item:hover .session-move-btn {
+  opacity: 1;
+}
+
+.session-move-btn:hover {
+  color: var(--text);
+}
+
+.move-target-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.move-target-item:hover,
+.move-target-item.sel {
+  border-color: var(--accent);
+  background: var(--bg-4);
+}
+
+.move-target-item small {
+  color: var(--text-3);
+}
+
+.move-target-item + .move-target-item {
+  margin-top: 8px;
+}
+
+.project-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.search-status {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.project-search-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.project-search-result {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px;
+  cursor: pointer;
+}
+
+.project-search-result:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.project-search-result span {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-search-result small,
+.index-status {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.message-action {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.message-action:hover {
+  color: var(--accent);
+}
+
+.message-copy {
+  display: block;
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+
+.msg-user .message-copy {
+  margin-left: auto;
+}
+
+.message-copy:hover {
+  color: var(--accent);
+}
+
+/* Project/session tree */
+.project-tree-list {
+  padding: 4px 6px 12px;
+}
+
+.project-tree-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.project-tree-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.project-tree-head:hover {
+  background: var(--bg-3);
+}
+
+.project-tree-group.active .project-tree-head {
+  background: var(--bg-3);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.project-tree-group.active .project-tree-name {
+  color: var(--accent);
+}
+
+.project-tree-toggle,
+.project-tree-action {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.project-tree-toggle {
+  width: 16px;
+  font-size: 12px;
+}
+
+.project-tree-toggle:hover,
+.project-tree-action:hover {
+  color: var(--text);
+  background: var(--bg-4);
+}
+
+.project-tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-1, var(--text));
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.project-tree-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.project-tree-delete.confirming {
+  width: auto;
+  min-width: 38px;
+  padding-inline: 5px;
+  color: var(--red);
+  opacity: 1;
+}
+
+.project-tree-children {
+  position: relative;
+  padding: 0 0 5px 15px;
+}
+
+.tree-session-item {
+  position: relative;
+  margin-left: 0;
+  padding-left: 18px;
+}
+
+.tree-branch {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border);
+}
+
+.session-item .tree-session-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.tree-session-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.tree-session-project-select {
+  flex: 0 0 auto;
+  width: 28px;
+  max-width: 28px;
+  min-height: 22px;
+  padding: 0;
+  font-size: 10px;
+}
+
+.project-tree-empty {
+  padding: 6px 10px 8px 24px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.project-tree-empty.standalone {
+  padding-left: 10px;
+}
+
+.unassigned-project-tree {
+  border-bottom: 0;
+}
+
+
+.long-task-queue {
+  flex: 0 0 auto;
+  width: min(760px, calc(100% - 32px));
+  margin: 0 auto 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.long-task-queue-head,
+.long-task-queue-head > div,
+.long-task-item,
+.long-task-meta {
+  display: flex;
+  align-items: center;
+}
+
+.long-task-queue-head {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.long-task-queue-head > div { gap: 8px; min-width: 0; }
+.long-task-queue-head strong { font-size: 12px; }
+.long-task-queue-head span { color: var(--text-3); font-size: 11px; }
+.long-task-list { display: grid; gap: 4px; }
+.long-task-item { gap: 8px; min-width: 0; padding: 5px 0; }
+.long-task-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-3); }
+.long-task-item.running .long-task-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.long-task-item.completed .long-task-dot { background: var(--green, #36b37e); }
+.long-task-item.failed .long-task-dot { background: var(--red); }
+.long-task-item.cancelled .long-task-dot { background: var(--text-3); }
+.long-task-copy { min-width: 0; flex: 1 1 auto; }
+.long-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.long-task-meta { gap: 8px; margin-top: 2px; color: var(--text-3); font-size: 11px; }
+.text-btn { border: 0; padding: 2px 4px; color: var(--text-2); background: transparent; cursor: pointer; font-size: 11px; white-space: nowrap; }
+.text-btn:hover { color: var(--text); }
+.text-btn.danger:hover { color: var(--red); }

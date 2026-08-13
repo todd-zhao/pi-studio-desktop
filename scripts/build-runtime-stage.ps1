@@ -30,6 +30,16 @@ try {
   Pop-Location
 }
 
+Write-Host "==> Building team server..."
+$teamSource = Resolve-Path (Join-Path $root "..\..\TeamServer\source")
+Push-Location $teamSource
+try {
+  npm run build
+  if ($LASTEXITCODE -ne 0) { throw "team server build failed" }
+} finally {
+  Pop-Location
+}
+
 Write-Host "==> Ensuring Node $nodeVersion runtime..."
 if (-not (Test-Path $nodeZipPath)) {
   New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
@@ -82,23 +92,41 @@ Write-Host "==> Replacing vulnerable dependencies bundled by the Pi SDK..."
 & node (Join-Path $root "scripts\patch-pi-bundled-deps.cjs") (Join-Path $depsStage "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "Pi bundled dependency patch failed" }
 
-Write-Host "==> Removing runtime-inert maps and type declarations..."
-$runtimeModules = Join-Path $depsStage "node_modules"
-Get-ChildItem -Path $runtimeModules -Recurse -File -Include "*.map", "*.d.ts", "*.d.mts", "*.d.cts" |
-  Remove-Item -Force
-$runtimeTypes = Join-Path $runtimeModules "@types"
-if (Test-Path -LiteralPath $runtimeTypes) {
-  Remove-Item -LiteralPath $runtimeTypes -Recurse -Force
-}
-
 Write-Host "==> Pruning node_modules to the external keep-set (see docs/runtime-deps.md)..."
 & node (Join-Path $root "scripts\keep-runtime-deps.cjs") (Join-Path $depsStage "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "runtime dependency pruning failed" }
+
+Write-Host "==> Cleaning runtime-inert files and foreign-platform prebuilds..."
+& node (Join-Path $root "scripts\clean-runtime-deps.cjs") (Join-Path $depsStage "node_modules")
+if ($LASTEXITCODE -ne 0) { throw "runtime dependency cleanup failed" }
 robocopy (Join-Path $depsStage "node_modules") (Join-Path $appDir "node_modules") /E /MT:16 /R:1 /W:1 /XD pi-studio-client pi-studio-server /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy node_modules failed with exit code $LASTEXITCODE" }
 
-robocopy (Join-Path $root "server\dist") (Join-Path $appDir "server\dist") /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy (Join-Path $root "server\dist") (Join-Path $appDir "server\dist") /E /XF *.map /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy server/dist failed with exit code $LASTEXITCODE" }
+
+Write-Host "==> Installing team server production-only dependencies..."
+$teamDepsStage = Join-Path $depsStage "team-server"
+New-Item -ItemType Directory -Force -Path $teamDepsStage | Out-Null
+Copy-Item (Join-Path $teamSource "package.json") (Join-Path $teamDepsStage "package.json")
+Copy-Item (Join-Path $teamSource "package-lock.json") (Join-Path $teamDepsStage "package-lock.json")
+Push-Location $teamDepsStage
+try {
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund --cache $runtimeNpmCache
+  if ($LASTEXITCODE -ne 0) { throw "team server production dependency install failed" }
+} finally {
+  Pop-Location
+}
+
+Write-Host "==> Cleaning team server runtime deps..."
+& node (Join-Path $root "scripts\clean-runtime-deps.cjs") (Join-Path $teamDepsStage "node_modules")
+if ($LASTEXITCODE -ne 0) { throw "team server dependency cleanup failed" }
+
+Write-Host "==> Assembling team-server into runtime stage..."
+robocopy (Join-Path $teamDepsStage "node_modules") (Join-Path $appDir "team-server\node_modules") /E /MT:16 /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy team-server node_modules failed with exit code $LASTEXITCODE" }
+robocopy (Join-Path $teamSource "dist") (Join-Path $appDir "team-server\dist") /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy team-server dist failed with exit code $LASTEXITCODE" }
 
 robocopy (Join-Path $root "client\dist") (Join-Path $appDir "client\dist") /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy client/dist failed with exit code $LASTEXITCODE" }

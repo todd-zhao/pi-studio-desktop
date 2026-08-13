@@ -36,7 +36,7 @@ flowchart LR
 
 ## 2. 打包策略
 
-服务端用 esbuild **全量打包**成单个 ESM 文件：
+服务端用 esbuild **全量打包**成单个 ESM 文件（由 `node scripts/build-server.mjs` 执行，等价参数如下）：
 
 ```text
 esbuild server/src/index.ts --bundle --platform=node --format=esm
@@ -45,6 +45,7 @@ esbuild server/src/index.ts --bundle --platform=node --format=esm
   --external:@earendil-works/pi-tui
   --external:silk-wasm
   --sourcemap=linked --sources-content
+  --define:__PI_VERSION__=<pi-coding-agent 版本>
   --banner:js="import { createRequire as __piCreateRequire } from 'module'; const require = __piCreateRequire(import.meta.url);"
 ```
 
@@ -55,7 +56,10 @@ esbuild server/src/index.ts --bundle --platform=node --format=esm
 - `--external:silk-wasm`：silk-wasm 是懒加载的 WASM 解码包，显式声明 external 防止
   将来它进入依赖树后被意外内联。
 - `--sourcemap=linked --sources-content`：生成 `index.mjs.map` 并内嵌全部源码，
-  **排查线上问题 / 核对实际打进包里的依赖版本**时直接看 map 即可。
+  **仅供开发调试**；发布阶段由构建脚本用 `robocopy /XF *.map` 排除，
+  **不随安装包分发**（见 §3）。
+- `--define:__PI_VERSION__`：从 `server/package.json` 读取 `pi-coding-agent` 版本并在
+  打包时注入，因为 SDK 被内联后运行时读不到它的 package.json（见 §7）。
 - `--banner:js=...`：**必须保留**。bundle 是纯 ESM，但被打包的 CJS 模块
   （如 express 依赖链里的 depd）里仍可能有运行时 `require()`（esbuild 转成动态
   `__require`），没有 require 会直接抛
@@ -73,9 +77,10 @@ npm run build:client  →  npm run build:server（全量打包 + sourcemap）
   →  npm rebuild better-sqlite3（为捆绑 Node 重建原生模块）
   →  patch-pi-bundled-deps（修正 Pi SDK 内嵌的 brace-expansion / undici；
       因 pi-coding-agent 已被内联进 bundle，此步通常自动跳过，无害）
-  →  删除 *.map / *.d.ts / @types（外部包内）
   →  keep-runtime-deps.cjs（裁剪 node_modules 到外部保留集，见 §5）
-  →  robocopy → dist/runtime-stage/Pi Studio/
+  →  clean-runtime-deps.cjs（删除 *.map / *.d.ts / *.md / 非 win32-x64 原生
+      prebuild / test-docs 等惰性文件，见 §5.1）
+  →  robocopy（server/dist 用 /XF *.map 排除 sourcemap）→ dist/runtime-stage/Pi Studio/
 ```
 
 > 顺序很重要：**先完整安装、再裁剪**。keep-runtime-deps 依赖完整的
@@ -103,8 +108,8 @@ npm run build:client  →  npm run build:server（全量打包 + sourcemap）
 
 > 这些 roots 的**依赖闭包**（dependencies + optionalDependencies + peerDependencies）
 > 会由 keep-runtime-deps 自动保留，不需要手工列出（例如 `better-sqlite3` 通过
-> `pi-hermes-memory` 闭包保留）。实测保留集：**90 包 / ~4000 文件 / 约 88 MB**
-> （原方案为 315 包 / 267 MB）。
+> `pi-hermes-memory` 闭包保留）。实测保留集（clean-runtime-deps 清理后）：
+> **90 包 / 2752 文件 / 约 90 MB**（原方案为 315 包 / 267 MB）。
 
 ## 5. 裁剪防护（scripts/keep-runtime-deps.cjs）
 
@@ -117,6 +122,26 @@ npm run build:client  →  npm run build:server（全量打包 + sourcemap）
    不会误删 `@scope` 下仍需要的包。
 
 输出保留包清单与统计，可在构建日志中核对。
+
+## 5.1 惰性文件清理（scripts/clean-runtime-deps.cjs）
+
+在 keep-runtime-deps 裁剪之后执行，进一步减少安装包内的小文件数与体积。
+
+**删除项**（均对 Windows x64 运行无影响）：
+- `*.map`（sourcemap）、`*.d.ts` / `*.d.mts` / `*.d.cts`（类型声明）、
+  `*.md`（README / CHANGELOG，保留 LICENSE / COPYING / NOTICE）；
+- `test` / `tests` / `benchmark` / `doc` / `docs` / `example` / `examples` /
+  `.github` / `.cache` 目录；
+- 非 win32-x64 的原生 prebuild（darwin / linux / android / freebsd /
+  win32-arm64 / win32-ia32 等 `.node` 及其平台目录）。
+
+**绝不删除**（否则运行时崩溃）：
+- `*.ts` / `*.tsx` / `*.mts` / `*.cts`：pi 扩展包（pi-subagents /
+  pi-hermes-memory / pi-goal-list-loop-audit）是**从 TypeScript 源码直接加载**的，
+  这些 `.ts` 是运行必需文件；
+- `*.js` / `*.cjs` / `*.mjs` / `*.json` 及所有 LICENSE / COPYING / NOTICE 文件。
+
+> 该脚本同样作用于 `team-server/node_modules`。
 
 ## 6. 升级 / 新增依赖时怎么做
 
@@ -151,8 +176,8 @@ npm run build:client  →  npm run build:server（全量打包 + sourcemap）
   package.json 的 `build:server` 里，再做针对性处理。
 - **pi-coding-agent**：已被内联进 bundle，不再需要外部保留；
   `patch-pi-bundled-deps.cjs` 因找不到其嵌套目录会自动跳过，属正常现象。
-- **sourcemap**：`server/dist/index.mjs.map` 会被一并拷贝进发布目录，用于排查；
-  发布产物中保留它是有意为之。
+- **sourcemap**：`server/dist/index.mjs.map` 仅存在于开发构建产物；发布阶段由
+  构建脚本排除（robocopy `/XF *.map`），不再随安装包分发。
 - **`ajv/dist/runtime/*`、`ajv-formats`、`google-auth-library`、`iconv-lite`**：
   保留它们是因为代码里有运行时生成的 require 字符串，保险起见留在外部，
   体积开销很小。
@@ -183,5 +208,6 @@ node dist/_bundle-test/native.cjs   # 检查原生模块引用（win32-console-m
 
 | 版本 | 说明 |
 |---|---|
+| 0.4.19 | 构建标准化：新增 `clean-runtime-deps.cjs` 清理惰性文件/异平台 prebuild（node_modules 3022→2752 文件）；发布产物排除 55MB sourcemap（`robocopy /XF *.map`）；运行时 stage 254→197.7 MB |
 | 0.4.13 | 引入本方案：纯 JS 依赖全量打包进 `server/dist/index.mjs`（26 MB），外部 `node_modules` 仅保留原生/懒加载必需集（90 包 / 3022 文件 / 86.5 MB），新增 `keep-runtime-deps.cjs` 裁剪与本文档；修复纯 ESM 下 CJS 动态 require 崩溃（`--banner:js` 注入 `createRequire` 垫片，见 §2/§7） |
 | ≤ 0.4.12 | 旧方案：`--packages=external`，外部复制全部生产依赖（315 包 / 267 MB） |

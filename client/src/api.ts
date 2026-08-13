@@ -1,5 +1,6 @@
 import type { AgentProfile, AppState, ArchivedSession, AttachmentInfo, CommandInfo, FileEntry, ModelCatalogEntry, ParsedDoc, Project, ProjectDocument, ProjectMemory, ProjectMemoryType, ProjectSummary, ProjectSearchResult, SessionMeta, ServerWsMessage, ClientWsMessage, WorkspaceInfo, WorkspaceFileContent, SkillSummary } from "./types";
 import type { ScheduledTask } from "./types";
+import { httpFetch, httpJson } from "./http";
 
 let authToken = "";
 try {
@@ -22,9 +23,7 @@ export function authenticatedUrl(url: string): string {
 }
 
 export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const headers = new Headers(init.headers);
-  if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
-  return fetch(url, { ...init, headers, credentials: "same-origin" });
+  return httpFetch(url, init, { token: authToken, sameOriginCredentials: true });
 }
 
 export const WS_URL = (() => {
@@ -105,27 +104,7 @@ export class PiSocket {
 // ------------------------------------------------------------------ REST
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  let res: Response;
-  try {
-    res = await apiFetch(url, { ...init, signal: controller.signal });
-  } catch (e) {
-    if ((e as Error).name === "AbortError") throw new Error("请求超时，请重试");
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = ((await res.json()) as { error?: string }).error ?? "";
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `HTTP ${res.status}`);
-  }
-  return (await res.json()) as T;
+  return httpJson<T>(url, init, { token: authToken, sameOriginCredentials: true });
 }
 
 export async function getState(): Promise<AppState> {
@@ -139,7 +118,6 @@ export async function listSessions(): Promise<SessionMeta[]> {
 export async function deleteSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
   return json<{ ok: boolean; activeFile?: string }>("/api/sessions", {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -151,7 +129,6 @@ export async function listArchivedSessions(): Promise<ArchivedSession[]> {
 export async function archiveSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
   return json<{ ok: boolean; activeFile?: string }>("/api/sessions/archive", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -159,7 +136,6 @@ export async function archiveSession(file: string): Promise<{ ok: boolean; activ
 export async function restoreSession(file: string): Promise<{ ok: boolean }> {
   return json<{ ok: boolean }>("/api/sessions/restore", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -167,7 +143,6 @@ export async function restoreSession(file: string): Promise<{ ok: boolean }> {
 export async function deleteArchivedSession(file: string): Promise<{ ok: boolean; activeFile?: string }> {
   return json<{ ok: boolean; activeFile?: string }>("/api/archived-sessions", {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -182,18 +157,16 @@ export async function getProject(id: string): Promise<Project> {
   return json<Project>(`/api/projects/${encodeURIComponent(id)}`);
 }
 
-export async function createProject(input: { name: string; description?: string; workspacePaths?: string[]; workspacePath?: string; instructions?: string }): Promise<Project> {
+export async function createProject(input: { name: string; description?: string; workspacePaths?: string[]; workspacePath?: string; mainWorkspacePath?: string | null; instructions?: string }): Promise<Project> {
   return json<Project>("/api/projects", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
 }
 
-export async function updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | null; workspacePath?: string | null; instructions?: string }): Promise<Project> {
+export async function updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | null; workspacePath?: string | null; mainWorkspacePath?: string | null; instructions?: string }): Promise<Project> {
   return json<Project>(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
 }
@@ -202,10 +175,21 @@ export async function removeProject(id: string): Promise<void> {
   await json(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function listArchivedProjects(): Promise<ProjectSummary[]> {
+  return json<ProjectSummary[]>("/api/projects/archived");
+}
+
+export async function archiveProject(id: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(id)}/archive`, { method: "POST" });
+}
+
+export async function restoreProject(id: string): Promise<void> {
+  await json(`/api/projects/${encodeURIComponent(id)}/restore`, { method: "POST" });
+}
+
 export async function assignSessionToProject(projectId: string, file: string): Promise<ProjectSummary | null> {
   return json<ProjectSummary | null>(`/api/projects/${encodeURIComponent(projectId)}/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -213,7 +197,6 @@ export async function assignSessionToProject(projectId: string, file: string): P
 export async function removeSessionFromProject(projectId: string, file: string): Promise<void> {
   await json(`/api/projects/${encodeURIComponent(projectId)}/sessions`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file }),
   });
 }
@@ -221,7 +204,6 @@ export async function removeSessionFromProject(projectId: string, file: string):
 export async function saveProjectMemory(projectId: string, input: { id?: string; content: string; type?: ProjectMemoryType; pinned?: boolean; sourceSessionId?: string }): Promise<ProjectMemory> {
   return json<ProjectMemory>(`/api/projects/${encodeURIComponent(projectId)}/memories`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
 }
@@ -238,7 +220,6 @@ export async function searchProject(projectId: string, query: string): Promise<P
 export async function addProjectDocument(projectId: string, input: { path: string; name?: string; summary?: string }): Promise<ProjectDocument> {
   return json<ProjectDocument>(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
 }
@@ -250,7 +231,7 @@ export async function removeProjectDocument(projectId: string, documentId: strin
 export async function uploadFiles(files: File[]): Promise<AttachmentInfo[]> {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
-  const res = await apiFetch("/api/upload", { method: "POST", body: fd });
+  const res = await httpFetch("/api/upload", { method: "POST", body: fd }, { token: authToken, sameOriginCredentials: true });
   if (!res.ok) throw new Error(`上传失败 HTTP ${res.status}`);
   const data = (await res.json()) as { files: AttachmentInfo[] };
   return data.files;
@@ -259,7 +240,6 @@ export async function uploadFiles(files: File[]): Promise<AttachmentInfo[]> {
 export async function addMcpServer(name: string, config: Record<string, unknown>): Promise<void> {
   await json("/api/mcp/servers", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, config }),
   });
 }
@@ -271,7 +251,6 @@ export async function removeMcpServer(name: string): Promise<void> {
 export async function addMcpServersBatch(servers: Record<string, unknown>): Promise<void> {
   await json("/api/mcp/servers/batch", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ servers }),
   });
 }
@@ -294,7 +273,6 @@ export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
 export async function addWorkspace(path: string): Promise<WorkspaceInfo[]> {
   return json<WorkspaceInfo[]>("/api/workspaces/add", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
 }
@@ -302,7 +280,6 @@ export async function addWorkspace(path: string): Promise<WorkspaceInfo[]> {
 export async function switchWorkspace(path: string): Promise<WorkspaceInfo[]> {
   return json<WorkspaceInfo[]>("/api/workspaces/switch", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
 }
@@ -317,7 +294,6 @@ export async function listWorkspaceFiles(path: string, root?: string): Promise<F
 export async function moveWorkspaceFile(source: string, destination: string, root?: string): Promise<{ ok: boolean }> {
   return json<{ ok: boolean }>("/api/workspace/files/move", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, destination, ...(root ? { root } : {}) }),
   });
 }
@@ -331,7 +307,6 @@ export async function readWorkspaceFile(path: string, root?: string): Promise<Wo
 export async function parseWorkspaceFile(path: string, root?: string): Promise<ParsedDoc> {
   return json<ParsedDoc>("/api/workspace/file/parse", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, ...(root ? { root } : {}) }),
   });
 }
@@ -349,7 +324,6 @@ export async function getModelsConfig(): Promise<Record<string, unknown>> {
 export async function registerModelProvider(name: string, config: Record<string, unknown>): Promise<{ ok: boolean; name: string; errors: string[] }> {
   return json("/api/models/register", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, config }),
   });
 }
@@ -357,7 +331,6 @@ export async function registerModelProvider(name: string, config: Record<string,
 export async function unregisterModelProvider(name: string): Promise<{ ok: boolean; name: string; errors: string[] }> {
   return json("/api/models/unregister", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
 }
@@ -365,7 +338,6 @@ export async function unregisterModelProvider(name: string): Promise<{ ok: boole
 export async function setProviderApiKey(provider: string, apiKey: string): Promise<void> {
   await json("/api/models/api-key", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider, apiKey }),
   });
 }
@@ -374,14 +346,14 @@ export async function removeProviderApiKey(provider: string): Promise<void> {
   await json(`/api/models/api-key?provider=${encodeURIComponent(provider)}`, { method: "DELETE" });
 }
 export const listSchedules = () => json<ScheduledTask[]>("/api/schedules");
-export const saveSchedule = (task: Partial<ScheduledTask>) => json<ScheduledTask>("/api/schedules", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(task) });
+export const saveSchedule = (task: Partial<ScheduledTask>) => json<ScheduledTask>("/api/schedules", { method:"POST", body:JSON.stringify(task) });
 export const runSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}/run`, {method:"POST"});
-export const setScheduleEnabled = (id:string, enabled:boolean) => json<ScheduledTask>(`/api/schedules/${encodeURIComponent(id)}/enabled`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
+export const setScheduleEnabled = (id:string, enabled:boolean) => json<ScheduledTask>(`/api/schedules/${encodeURIComponent(id)}/enabled`, {method:"POST",body:JSON.stringify({enabled})});
 export const removeSchedule = (id:string) => json(`/api/schedules/${encodeURIComponent(id)}`,{method:"DELETE"});
 export const getSubagents = () => json<{enabled:boolean}>("/api/subagents");
-export const setSubagents = (enabled:boolean) => json<{enabled:boolean}>("/api/subagents",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
+export const setSubagents = (enabled:boolean) => json<{enabled:boolean}>("/api/subagents",{method:"POST",body:JSON.stringify({enabled})});
 export const getGoals = () => json<{enabled:boolean;goal:string}>("/api/goals");
-export const setGoals = (enabled:boolean, goal:string) => json<{enabled:boolean;goal:string}>("/api/goals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,goal})});
+export const setGoals = (enabled:boolean, goal:string) => json<{enabled:boolean;goal:string}>("/api/goals",{method:"POST",body:JSON.stringify({enabled,goal})});
 export const retryBoot = () => json<{ok:boolean;state:string;error?:string}>("/api/runtime/retry", { method: "POST" });
 
 export async function getEnvironment(): Promise<{ home?: string; username?: string }> {
@@ -397,7 +369,6 @@ export async function listAgents(): Promise<{ agents: AgentProfile[]; activeAgen
 export async function saveAgent(agent: Omit<AgentProfile, "builtIn">): Promise<AgentProfile> {
   const result = await json<{ ok: boolean; agent: AgentProfile }>("/api/agents", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(agent),
   });
   return result.agent;
@@ -410,7 +381,6 @@ export async function removeAgent(id: string): Promise<void> {
 export async function setActiveAgent(id: string): Promise<AgentProfile> {
   const result = await json<{ ok: boolean; activeAgent: AgentProfile }>("/api/agents/active", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
   });
   return result.activeAgent;
@@ -428,7 +398,6 @@ export async function listSkills(): Promise<{ directory: string; skills: SkillSu
 export async function addSkill(name: string, description: string, instructions: string): Promise<SkillSummary[]> {
   const r = await json<{ ok: boolean; skills: SkillSummary[] }>("/api/skills", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, description, instructions }),
   });
   return r.skills;

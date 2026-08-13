@@ -6,6 +6,9 @@ import {
   type TaskDetail, type TeamMember, type TeamRole, type TeamTask, type TeamUser,
 } from "../team-api";
 
+import { PanelShell } from "./PanelShell";
+import { usePanel } from "../hooks/usePanel";
+
 interface Props {
   onClose: () => void;
   onToast: (level: "info" | "warn" | "error" | "ok", message: string) => void;
@@ -60,7 +63,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
   const [lastInvite, setLastInvite] = useState<{ code: string; expiresAt: number } | null>(null);
   const [inviteRole, setInviteRole] = useState<Exclude<TeamRole, "owner">>("member");
   const [showMembers, setShowMembers] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy, setBusy, run } = usePanel(onToast);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refreshTasks = useCallback(async () => {
@@ -90,8 +93,8 @@ export function TeamPanel({ onClose, onToast }: Props) {
   }, [user?.id, refreshTasks]);
 
   const authenticate = async () => {
-    setBusy(true); saveTeamConnection(serverUrl, "");
-    try {
+    saveTeamConnection(serverUrl, "");
+    await run(async () => {
       const input = credentials;
       const result = mode === "bootstrap"
         ? await teamBootstrap({ teamName: input.teamName, username: input.username, displayName: input.displayName, password: input.password })
@@ -101,7 +104,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
       saveTeamConnection(serverUrl, result.token); setUser(result.user); setInitialized(true);
       const [nextMembers, nextTasks] = await Promise.all([listTeamMembers(), listTeamTasks()]);
       setMembers(nextMembers); setTasks(nextTasks); onToast("ok", `已进入 ${result.user.teamName}`);
-    } catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }
+    });
   };
 
   const openTask = async (task: TeamTask) => {
@@ -109,18 +112,18 @@ export function TeamPanel({ onClose, onToast }: Props) {
   };
 
   const submitTask = async () => {
-    setBusy(true);
-    try {
+    await run(async () => {
       await createTeamTask({ ...draft, assigneeId: draft.assigneeId || undefined });
       setDraft({ title: "", description: "", assigneeId: "", resultType: "file", priority: "normal" }); setCreating(false);
       await refreshTasks(); onToast("ok", "团队任务已创建");
-    } catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }
+    });
   };
 
   const changeStatus = async (status: string) => {
-    if (!detail) return; setBusy(true);
-    try { await updateTeamTask(detail.task.id, { status, revision: detail.task.revision }); await refreshTasks(); }
-    catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }
+    if (!detail) return;
+    await run(async () => {
+      await updateTeamTask(detail.task.id, { status, revision: detail.task.revision }); await refreshTasks();
+    });
   };
 
   const refreshMembers = async () => setMembers(await listTeamMembers());
@@ -128,7 +131,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
   if (!user) {
     return (
       <div className="team-panel panel-body">
-        <PanelHeader title="团队空间" onClose={onClose} />
+        <PanelShell variant="team" title="团队空间" onClose={onClose} />
         <div className="panel-sub">连接团队服务器后，成员可以共享任务、评论和成果文件。</div>
         <label className="team-label">服务器地址</label>
         <div className="form-row"><input className="grow" value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} /><button className="btn" onClick={() => void connect()}>检测</button></div>
@@ -151,7 +154,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
     const canEdit = user.role !== "guest";
     return (
       <div className="team-panel panel-body">
-        <PanelHeader title="任务详情" onClose={() => setDetail(null)} closeLabel="返回" />
+        <PanelShell variant="team" title="任务详情" onClose={() => setDetail(null)} closeLabel="返回" />
         <div className="team-task-head"><span className={`team-status ${detail.task.status}`}>{statusName[detail.task.status] ?? detail.task.status}</span><span className="team-muted">{detail.task.assignee_name || "未分配"}</span></div>
         <h3 className="team-task-title">{detail.task.title}</h3>
         {detail.task.description && <div className="team-description">{detail.task.description}</div>}
@@ -192,7 +195,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
 
   return (
     <div className="team-panel panel-body">
-      <PanelHeader title={user.teamName} onClose={onClose} />
+      <PanelShell variant="team" title={user.teamName} onClose={onClose} />
       <div className="team-user-row"><span>{user.displayName}</span><span className="team-role">{user.role}</span><button className="mini-btn" onClick={() => { saveTeamConnection(serverUrl, ""); setUser(null); }}>退出</button></div>
       <div className="team-toolbar">
         {user.role !== "guest" && <button className="btn primary" onClick={() => setCreating(!creating)}>＋ 新任务</button>}
@@ -254,10 +257,6 @@ export function TeamPanel({ onClose, onToast }: Props) {
       </>}
     </div>
   );
-}
-
-function PanelHeader({ title, onClose, closeLabel = "关闭" }: { title: string; onClose: () => void; closeLabel?: string }) {
-  return <div className="team-panel-header"><span className="panel-title">{title}</span><button className="icon-btn" title={closeLabel} onClick={onClose}>{closeLabel === "返回" ? "←" : "×"}</button></div>;
 }
 
 function TeamInput({ label, value, type = "text", onChange }: { label: string; value: string; type?: string; onChange: (value: string) => void }) {

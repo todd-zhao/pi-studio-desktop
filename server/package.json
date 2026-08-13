@@ -1,6 +1,6 @@
 {
   "name": "pi-studio-server",
-  "version": "0.4.13",
+  "version": "0.4.22",
   "private": true,
   "type": "module",
   "description": "Pi Studio backend: Pi SDK bridge + MCP adapter + marketplace proxy",
@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
+    "@types/cross-spawn": "^6.0.6",
     "@types/express": "^4.17.25",
     "@types/multer": "^1.4.13",
     "@types/node": "^22.10.0",

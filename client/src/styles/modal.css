@@ -1,0 +1,104 @@
+/* ------------------------------------------------------------ modal/detail */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  width: min(680px, 92vw);
+  max-height: 84vh;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-head .nm {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-close {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 18px;
+  background: none;
+  border: none;
+}
+
+.modal-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.modal-body .readme {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.config-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--backdrop);
+  backdrop-filter: blur(4px);
+}
+
+.config-modal {
+  width: min(760px, 94vw);
+}
+
+.config-modal .right-panel,
+.config-modal .team-right-panel,
+.config-modal .wechat-right-panel {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.config-modal .right-panel-inner {
+  width: 100%;
+  min-width: 0;
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.modal-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+

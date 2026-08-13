@@ -1,0 +1,31 @@
+/* --------------------------------------------------------------- thinking */
+
+.thinking {
+  border-left: 2px solid var(--border-2);
+  padding: 2px 12px;
+  margin: 4px 0;
+}
+
+.thinking summary {
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 12px;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thinking summary:hover {
+  color: var(--text-2);
+}
+
+.thinking-body {
+  color: var(--text-3);
+  font-size: 13px;
+  white-space: pre-wrap;
+  margin-top: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+

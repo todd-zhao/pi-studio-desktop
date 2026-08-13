@@ -8,7 +8,7 @@ import type { WeChatBot, IncomingMessage } from "@wechatbot/wechatbot";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { WechatLogEntry, WechatStatusPhase } from "../types.ts";
+import type { WechatLogEntry, WechatStatusPhase } from "@pi-studio/shared";
 
 type PiContent =
   | string

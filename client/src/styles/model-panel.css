@@ -1,0 +1,125 @@
+/* -------------------------------------------------------------- model panel */
+
+.model-provider {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  margin-bottom: 6px;
+  /* overflow: clip (not hidden): avoids a Chromium bug where a CLOSED <details>
+     inside a flex container computes height 0, collapsing to a 2px line. */
+  overflow: clip;
+}
+
+.model-provider summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  list-style: none;
+}
+
+.model-provider summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-provider summary::before {
+  content: "▸";
+  color: var(--text-3);
+  font-size: 10px;
+  transition: transform 0.12s;
+}
+
+.model-provider[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.mp-name {
+  font-weight: 600;
+}
+
+.mp-auth {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.mp-auth.ok {
+  color: var(--green);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+.mp-auth.no {
+  color: var(--text-3);
+}
+
+.mp-count {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.mp-models {
+  border-top: 1px solid var(--border);
+  padding: 4px;
+}
+
+.mp-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mp-model:hover {
+  background: var(--bg-4);
+}
+
+.mp-model.cur {
+  background: rgba(255, 138, 61, 0.1);
+  outline: 1px solid rgba(255, 138, 61, 0.35);
+}
+
+.mp-model.off {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mp-model-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-model-name {
+  color: var(--text-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-model-badges {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tag.cur {
+  color: var(--accent);
+  border-color: rgba(255, 138, 61, 0.4);
+}
+
+.tag.no {
+  color: var(--yellow);
+}
+

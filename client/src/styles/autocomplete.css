@@ -1,0 +1,53 @@
+/* ---------------------------------------------------------- autocomplete */
+
+.completion-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  z-index: 50;
+  padding: 4px;
+}
+
+.completion-title {
+  font-size: 10px;
+  color: var(--text-3);
+  padding: 3px 8px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.completion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.completion-item.sel {
+  background: var(--bg-4);
+  outline: 1px solid var(--border-2);
+}
+
+.completion-item .ci-label {
+  font-family: var(--mono);
+  color: var(--accent-2);
+  white-space: nowrap;
+}
+
+.completion-item .ci-detail {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

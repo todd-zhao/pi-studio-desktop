@@ -1,3 +1,4 @@
+import { httpFetch, httpJson } from "./http";
 export type TeamRole = "owner" | "admin" | "member" | "guest";
 
 export interface TeamUser {
@@ -42,7 +43,18 @@ export interface TaskDetail { task: TeamTask; comments: TeamComment[]; artifacts
 const URL_KEY = "pi-team-server-url";
 const TOKEN_KEY = "pi-team-token";
 
-export const getTeamServerUrl = () => localStorage.getItem(URL_KEY) || "http://127.0.0.1:8790";
+function defaultTeamServerUrl(): string {
+  try {
+    const currentUrl = new URL(window.location.href);
+    const teamPort = currentUrl.searchParams.get("teamPort");
+    if (teamPort) return `http://127.0.0.1:${teamPort}`;
+  } catch {
+    // Fall back to the default port.
+  }
+  return "http://127.0.0.1:8790";
+}
+
+export const getTeamServerUrl = () => localStorage.getItem(URL_KEY) || defaultTeamServerUrl();
 export const getTeamToken = () => localStorage.getItem(TOKEN_KEY) || "";
 export const saveTeamConnection = (url: string, token?: string) => {
   localStorage.setItem(URL_KEY, url.replace(/\/+$/, ""));
@@ -50,14 +62,7 @@ export const saveTeamConnection = (url: string, token?: string) => {
 };
 
 async function request<T>(path: string, init: RequestInit = {}, authenticated = true): Promise<T> {
-  const token = getTeamToken();
-  const headers = new Headers(init.headers);
-  if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  if (authenticated && token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${getTeamServerUrl()}${path}`, { ...init, headers });
-  const data = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new Error(data.error || `团队服务请求失败（${response.status}）`);
-  return data as T;
+  return httpJson<T>(path, init, { baseUrl: getTeamServerUrl(), token: getTeamToken(), authenticated });
 }
 
 export const teamHealth = () => request<{ ok: boolean; initialized: boolean }>("/api/health", {}, false);
@@ -83,7 +88,7 @@ export const uploadTaskArtifact = (id: string, file: File, note: string) => {
 };
 export const deleteTaskArtifact = (id: string) => request<{ ok: true }>(`/api/artifacts/${encodeURIComponent(id)}`, { method: "DELETE" });
 export async function downloadTaskArtifact(artifact: TeamArtifact): Promise<void> {
-  const response = await fetch(`${getTeamServerUrl()}/api/artifacts/${encodeURIComponent(artifact.id)}/download`, { headers: { Authorization: `Bearer ${getTeamToken()}` } });
+  const response = await httpFetch(`/api/artifacts/${encodeURIComponent(artifact.id)}/download`, {}, { baseUrl: getTeamServerUrl(), token: getTeamToken(), timeoutMs: 0 });
   if (!response.ok) throw new Error("下载成果文件失败");
   const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = artifact.original_name; anchor.click();

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ArchivedSession } from "../types";
+import { PanelShell } from "./PanelShell";
 
 interface Props {
   sessions: ArchivedSession[];
@@ -18,12 +19,7 @@ export function ArchivedSessionsPanel({ sessions, onRestore, onDelete, onClose }
   const [confirmingFile, setConfirmingFile] = useState<string | null>(null);
 
   return (
-    <div className="right-panel-inner archived-panel">
-      <div className="panel-head">
-        <h3>已归档对话</h3>
-        <button className="icon-btn" onClick={onClose}>×</button>
-      </div>
-      <p className="panel-hint">归档的对话不会出现在普通会话列表中，可在此还原或删除。</p>
+    <PanelShell variant="head" className="archived-panel" title="已归档对话" hint="归档的对话不会出现在普通会话列表中，可在此还原或删除。" onClose={onClose}>
       {sessions.length === 0 ? (
         <div className="panel-empty">暂无已归档对话</div>
       ) : (
@@ -58,6 +54,6 @@ export function ArchivedSessionsPanel({ sessions, onRestore, onDelete, onClose }
           ))}
         </div>
       )}
-    </div>
+    </PanelShell>
   );
 }

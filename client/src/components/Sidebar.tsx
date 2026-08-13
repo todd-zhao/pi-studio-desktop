@@ -1,7 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
-import type { AppState, ProjectSummary, SessionMeta, WechatStatus, WorkspaceInfo } from "../types";
+import type { AppState, ProjectSummary, SessionMeta, WechatStatus } from "../types";
 import type { PanelTab } from "../App";
-import { DirPicker } from "./DirPicker";
 import { FileTree } from "./FileTree";
 
 interface Props {
@@ -10,7 +9,6 @@ interface Props {
   sessions: SessionMeta[];
   projects: ProjectSummary[];
   selectedProjectId: string | null;
-  workspaces: WorkspaceInfo[];
   connected: boolean;
   wechatStatus?: WechatStatus | null;
   theme: "dark" | "light";
@@ -21,13 +19,12 @@ interface Props {
   onSwitchSession: (file: string) => void;
   onDeleteSession: (file: string) => void;
   onArchiveSession: (file: string) => void;
-  onProjectSelect: (id: string | null) => void;
+  onSelectProject: (id: string | null) => void;
   onManageProjects: () => void;
   onNewProjectSession: (projectId: string) => void;
   onDeleteProject: (projectId: string) => void;
+  onArchiveProject: (projectId: string) => void;
   onAssignSession: (file: string, projectId: string | null) => void;
-  onSwitchWorkspace: (path: string) => void;
-  onAddWorkspace: (path: string) => void;
   onRefreshSessions: () => void;
   onSetThinking: (level: string) => void;
   onPickFile: (relPath: string, name: string, root?: string) => void;
@@ -74,8 +71,7 @@ function SettingsGroup({ id, title, badge, open, onToggle, children }: SettingsG
 }
 
 export function Sidebar(props: Props) {
-  const { state, sessions, projects, workspaces, connected, wechatStatus, activePanel, theme, style } = props;
-  const [showDirPicker, setShowDirPicker] = useState(false);
+  const { state, sessions, projects, connected, wechatStatus, activePanel, theme, style } = props;
   const [sideTab, setSideTab] = useState<"sessions" | "files">("sessions");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
@@ -173,7 +169,7 @@ export function Sidebar(props: Props) {
     const collapsed = collapsedProjectIds.has(project.id);
     const confirming = confirmingDeleteProjectId === project.id;
     return (
-      <div className="project-tree-group" key={project.id}>
+      <div className={`project-tree-group${props.selectedProjectId === project.id ? " active" : ""}`} key={project.id}>
         <div className="project-tree-head" onClick={() => setCollapsedProjectIds((current) => {
           const next = new Set(current);
           if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
@@ -194,6 +190,13 @@ export function Sidebar(props: Props) {
               onClick={(event) => { event.stopPropagation(); props.onNewProjectSession(project.id); }}
             >
               ＋
+            </button>
+            <button
+              className="project-tree-action"
+              title="归档项目"
+              onClick={(event) => { event.stopPropagation(); props.onArchiveProject(project.id); }}
+            >
+              🗂
             </button>
             <button
               className={`project-tree-action project-tree-delete${confirming ? " confirming" : ""}`}
@@ -228,6 +231,7 @@ export function Sidebar(props: Props) {
   const currentModelName = current?.displayName && !/^unknown(?:[/]unknown)?$/i.test(current.displayName)
     ? current.displayName
     : "";
+  const noModel = !current || (current.provider === "unknown" && current.id === "unknown");
 
   const mcp = state?.mcp;
   const mcpServers = mcp?.servers ?? [];
@@ -278,50 +282,41 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      <div className="sidebar-section first">工作区</div>
+      <div className="sidebar-section first">项目</div>
       <div className="sel-row workspace-row">
         <select
-          value={state?.cwd ?? ""}
-          onChange={(e) => {
-            const p = e.target.value;
-            if (p) props.onSwitchWorkspace(p);
-          }}
-          title={state?.cwd}
+          value={props.selectedProjectId ?? ""}
+          onChange={(e) => props.onSelectProject(e.target.value || null)}
+          title="选择项目"
         >
-          {workspaces.map((w) => (
-            <option key={w.path} value={w.path}>
-              {w.current ? "● " : ""}
-              {w.name}
+          <option value="">临时对话</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
             </option>
           ))}
         </select>
         <button
           className="icon-btn"
           style={{ width: "24px", height: "24px", fontSize: "13px" }}
-          title="选择工作区目录"
-          onClick={() => setShowDirPicker(true)}
+          title="管理项目"
+          onClick={props.onManageProjects}
         >
           ＋
         </button>
       </div>
 
-      {showDirPicker && (
-        <DirPicker
-          initialPath={state?.cwd}
-          onSelect={(p) => {
-            props.onAddWorkspace(p);
-            props.onSwitchWorkspace(p);
-            setShowDirPicker(false);
-          }}
-          onClose={() => setShowDirPicker(false)}
-        />
-      )}
-
       <div className="browse-area">
         <div className="sidebar-section browse-head">
           <span>浏览</span>
           <span className="browse-actions">
-            <button className="icon-btn browse-action-btn" title="新会话" onClick={props.onNewSession}>＋</button>
+            <button
+              className="icon-btn browse-action-btn"
+              title={props.selectedProjectId ? "在此项目中新建对话" : "新建对话"}
+              onClick={() => (props.selectedProjectId ? props.onNewProjectSession(props.selectedProjectId) : props.onNewSession())}
+            >
+              ＋
+            </button>
             <button className="icon-btn browse-action-btn" title="刷新会话列表" onClick={props.onRefreshSessions}>↻</button>
           </span>
         </div>
@@ -410,19 +405,20 @@ export function Sidebar(props: Props) {
             <SettingsGroup
               id="models"
               title="模型管理"
-              badge={currentModelName || currentKey || "默认"}
+              badge={noModel ? "未配置模型" : (currentModelName || currentKey || "默认")}
               open={settingsSection === "models"}
               onToggle={toggleSettingsSection}
             >
               <div className="settings-status">
                 <span>当前模型</span>
-                <span className="settings-current">{currentModelName || currentKey || "默认"}</span>
+                <span className="settings-current">{noModel ? "未配置模型" : (currentModelName || currentKey || "默认")}</span>
               </div>
               <div className="sel-row" style={{ marginTop: "8px" }}>
                 <label>思考强度</label>
                 <select
                   value={state?.thinkingLevel ?? "off"}
                   onChange={(e) => props.onSetThinking(e.target.value)}
+                  title={noModel ? "需要先配置模型，思考强度才会生效" : undefined}
                 >
                   {THINKING_LEVELS.map((l) => (
                     <option key={l} value={l}>

@@ -1,0 +1,88 @@
+/* --------------------------------------------------------------- messages */
+
+.msg-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.msg-user .bubble {
+  max-width: 78%;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-3));
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: 9px 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+
+.msg-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  max-width: 240px;
+}
+
+.attach-chip .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.assistant-head .badge {
+  background: var(--bg-4);
+  border: 1px solid var(--border-2);
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.msg-body {
+  font-size: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.msg-body .md > :first-child {
+  margin-top: 0;
+}
+.msg-body .md > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-error {
+  color: var(--red);
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+

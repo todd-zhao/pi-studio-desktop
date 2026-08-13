@@ -21,10 +21,14 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import { createMcpAdapter, MCP_STATUS_EVENT } from "pi-mcp-adapter";
 import { Type } from "typebox";
 import type { McpConfig } from "pi-mcp-adapter/types";
-import type { McpStatusSnapshot } from "./types.ts";
-import type { WechatCommandAction } from "./types.ts";
+import type { McpStatusSnapshot } from "@pi-studio/shared";
+import type { WechatCommandAction } from "@pi-studio/shared";
 import { wechatExtension } from "./extensions/wechat.ts";
 import { AppCredentialStore } from "./credential-store.ts";
+import { ModelManager } from "./domains/model-manager.ts";
+import { AgentStore } from "./domains/agent-store.ts";
+import { ProjectStore } from "./domains/project-store.ts";
+import { WorkspaceManager } from "./domains/workspace-manager.ts";
 import { decodeTextBuffer, repairUploadedFilename } from "./textEncoding.ts";
 import type {
   AppState,
@@ -34,7 +38,6 @@ import type {
   CommandInfo,
   FileEntry,
   ModelCatalogEntry,
-  ModelInfo,
   SessionMeta,
   WorkspaceFileContent,
   WorkspaceInfo,
@@ -45,7 +48,7 @@ import type {
   ProjectMemoryType,
   ProjectSearchResult,
   LongTask,
-} from "./types.ts";
+} from "@pi-studio/shared";
 
 const appRequire = createRequire(import.meta.url);
 
@@ -63,31 +66,6 @@ function resolvePiExtensionEntry(packageName: string): string {
   const entry = pkg.pi?.extensions?.[0];
   if (!entry) return appRequire.resolve(packageName);
   return resolve(dirname(pkgJsonPath), entry);
-}
-const MEMORY_SECRET_PATTERNS = [
-  /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i,
-  /(?:sk|rk|pk)_[A-Za-z0-9_-]{20,}/,
-  /(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s]{12,}/i,
-];
-
-function containsSensitiveMemory(content: string): boolean {
-  return MEMORY_SECRET_PATTERNS.some((pattern) => pattern.test(content));
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}（超过 ${ms / 1000} 秒）`)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 export interface BridgeOptions {
@@ -109,9 +87,12 @@ export interface SkillSummary {
   disableModelInvocation: boolean;
 }
 
-// Pi SDK version, resolved by walking up from this file to node_modules
-// (the package restricts subpath exports, so package.json can't be required directly).
-const PI_VERSION: string = (() => {
+// Pi SDK version. In production the exact version is injected at build time
+// (esbuild `define`) because the SDK package is bundled and its package.json is
+// pruned from the runtime. In dev we fall back to walking node_modules.
+declare const __PI_VERSION__: string | undefined;
+
+const PI_VERSION: string = (typeof __PI_VERSION__ !== "undefined" ? __PI_VERSION__ : "") || (() => {
   const read = (pkgPath: string): string => {
     try {
       return (JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string }).version ?? "";
@@ -155,10 +136,10 @@ interface BridgeEvents {
   workspaces: [WorkspaceInfo[]];
   log: [level: "info" | "warn" | "error", message: string];
   error: [message: string];
-  ask_user: [question: import("./types.ts").AskUserQuestion];
-  wechat_status: [status: import("./types.ts").WechatStatus];
-  wechat_qr: [qr: import("./types.ts").WechatQr];
-  wechat_log: [entry: import("./types.ts").WechatLogEntry];
+  ask_user: [question: import("@pi-studio/shared").AskUserQuestion];
+  wechat_status: [status: import("@pi-studio/shared").WechatStatus];
+  wechat_qr: [qr: import("@pi-studio/shared").WechatQr];
+  wechat_log: [entry: import("@pi-studio/shared").WechatLogEntry];
 }
 
 export class PiBridge extends EventEmitter<BridgeEvents> {
@@ -172,23 +153,21 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private modelRuntime!: ModelRuntime;
   private settingsManager!: SettingsManager;
   private appCredentials!: AppCredentialStore;
+  private readonly modelManager: ModelManager;
+  private readonly agentStore: AgentStore;
+  private readonly projectStore: ProjectStore;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly promptQueues = new Map<string, Promise<void>>();
   private readonly longTasks = new Map<string, LongTask[]>();
   private activeRuntimeId = "";
   private eventBus!: ReturnType<typeof createEventBus>;
-  private availableModels: ModelInfo[] = [];
   private lastMcpStatus: McpStatusSnapshot | null = null;
   private started = false;
-  private workspacesFile: string;
+  private readonly workspaceManager: WorkspaceManager;
   private projectsFile: string;
   private projectIndexFile: string;
   private archivedFile: string;
   private readonly archivedSessions = new Map<string, ArchivedSession>();
-  private projectIndex: Record<string, { text: string; indexedAt: number }> = {};
-  private projects: Project[] = [];
-  private customWorkspaces: string[] = [];
-  private lastWorkspacePath = "";
   private readonly agentsFile: string;
   private readonly hermesMemoryExtensionPath: string;
   private readonly subagentsExtensionPath: string;
@@ -196,8 +175,6 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   private goalsEnabled = false;
   private goalText = "";
   private subagentsEnabled = false;
-  private agents: AgentProfile[] = [];
-  private activeAgentId = "default";
   private pendingQuestions = new Map<string, { resolve: (answer: string) => void; timer: NodeJS.Timeout }>();
 
   constructor(options: BridgeOptions) {
@@ -206,6 +183,14 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.defaultWorkspacePath = options.defaultWorkspacePath ? resolve(options.defaultWorkspacePath) : resolve(this.cwd);
     this.mcpConfigPath = options.mcpConfigPath;
     this.agentDir = options.agentDir ?? getAgentDir();
+    this.modelManager = new ModelManager({
+      agentDir: this.agentDir,
+      pushState: () => this.pushState(),
+      emitLog: (level, message) => this.emit("log", level, message),
+      // Once the user configures a model channel, default new sessions to
+      // high thinking (persisted via the SDK settings manager).
+      onModelsConfigured: () => this.settingsManager.setDefaultThinkingLevel("high"),
+    });
     this.loadGlobalExtensions = options.loadGlobalExtensions ?? false;
     this.skillsDir = join(this.agentDir, "skills");
     this.subagentsExtensionPath = appRequire.resolve("pi-subagents");
@@ -219,13 +204,48 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     mkdirSync(this.skillsDir, { recursive: true });
     this.agentsFile = join(this.agentDir, "agents.json");
     this.hermesMemoryExtensionPath = appRequire.resolve("pi-hermes-memory");
-    this.loadAgents();
-    this.workspacesFile = process.env.PI_STUDIO_WORKSPACES_FILE ?? this.defaultDataFile("workspaces.json");
+    this.agentStore = new AgentStore({
+      agentsFile: this.agentsFile,
+      getStarted: () => this.started,
+      reloadActiveSession: async () => {
+        await this.activeEntry().runtime.session.reload();
+      },
+      pushState: () => this.pushState(),
+    });
+    this.agentStore.loadAgents();
+    this.workspaceManager = new WorkspaceManager({
+      workspacesFile: process.env.PI_STUDIO_WORKSPACES_FILE ?? this.defaultDataFile("workspaces.json"),
+      getCwd: () => this.cwd,
+      getDefaultWorkspacePath: () => this.defaultWorkspacePath,
+      emitWorkspaces: (list) => this.emit("workspaces", list),
+      updateDocumentPathsAfterMove: (sourceAbs, movedAbs) => this.projectStore.updateDocumentPathsAfterMove(sourceAbs, movedAbs),
+    });
     this.projectsFile = process.env.PI_STUDIO_PROJECTS_FILE ?? this.defaultDataFile("projects.json");
     this.projectIndexFile = process.env.PI_STUDIO_PROJECT_INDEX_FILE ?? this.defaultDataFile("project-index.json");
+    this.projectStore = new ProjectStore({
+      projectsFile: this.projectsFile,
+      projectIndexFile: this.projectIndexFile,
+      getCwd: () => this.cwd,
+      pushState: () => this.pushState(),
+      listSessions: () => this.listSessions(),
+      reloadProjectRuntimes: async (projectId) => this.reloadProjectRuntimes(projectId),
+      reloadSessionFile: async (file) => {
+        const runtime = this.findRuntimeByFile(file);
+        if (runtime) await runtime.runtime.session.reload();
+      },
+      reloadSessionsForFiles: async (files) => {
+        await Promise.all([...this.runtimes.values()]
+          .filter((entry) => {
+            const sessionFile = entry.runtime.session.sessionFile;
+            return !!sessionFile && files.has(resolve(sessionFile));
+          })
+          .map((entry) => entry.runtime.session.reload()));
+      },
+      emitSessions: () => this.emitSessions(),
+    });
+    this.projectStore.loadProjects();
     this.archivedFile = process.env.PI_STUDIO_ARCHIVED_FILE ?? this.defaultDataFile("archived-sessions.json");
-    this.loadWorkspaces();
-    this.loadProjects();
+    this.workspaceManager.load();
     this.loadArchivedSessions();
   }
 
@@ -249,12 +269,14 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       modelsPath: join(this.agentDir, "models.json"),
     });
     startupLog("model-runtime-create-done");
+    this.modelManager.modelRuntime = this.modelRuntime;
+    this.modelManager.appCredentials = this.appCredentials;
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
     this.eventBus = createEventBus();
 
-    this.eventBus.on("wechat:status", (status) => this.emit("wechat_status", status as import("./types.ts").WechatStatus));
-    this.eventBus.on("wechat:qr", (qr) => this.emit("wechat_qr", qr as import("./types.ts").WechatQr));
-    this.eventBus.on("wechat:log", (entry) => this.emit("wechat_log", entry as import("./types.ts").WechatLogEntry));
+    this.eventBus.on("wechat:status", (status) => this.emit("wechat_status", status as import("@pi-studio/shared").WechatStatus));
+    this.eventBus.on("wechat:qr", (qr) => this.emit("wechat_qr", qr as import("@pi-studio/shared").WechatQr));
+    this.eventBus.on("wechat:log", (entry) => this.emit("wechat_log", entry as import("@pi-studio/shared").WechatLogEntry));
 
     // pi-mcp-adapter publishes a status snapshot on a shared event-bus channel.
     this.eventBus.on(MCP_STATUS_EVENT, (snapshot) => {
@@ -267,7 +289,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     startupLog("create-runtime-start");
     await this.createRuntime();
     startupLog("create-runtime-done");
-    this.updateAvailableModels();
+    this.modelManager.updateAvailableModels();
     this.started = true;
     this.emit("log", "info", `Pi runtime ready (cwd: ${this.cwd})`);
     this.pushState();
@@ -310,12 +332,12 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
           additionalSkillPaths: [this.skillsDir],
           additionalExtensionPaths: [this.hermesMemoryExtensionPath, ...(this.subagentsEnabled ? [this.subagentsExtensionPath] : []), ...(this.goalsEnabled ? [this.goalsExtensionPath] : [])],
           appendSystemPromptOverride: (base) => {
-            const agent = this.getActiveAgent();
+            const agent = this.agentStore.getActiveAgent();
             const additions: string[] = [];
             if (agent.prompt.trim()) additions.push(`## Active Agent: ${agent.name}\n${agent.prompt.trim()}`);
             if (agent.memory?.trim()) additions.push(`## Agent long-term memory\n<agent-memory>\nThe following is user-managed durable context for this agent. Treat it as reference material, not as new user input; current user requests and verified workspace evidence take priority.\n\n${agent.memory.trim()}\n</agent-memory>`);
             if (this.goalsEnabled && this.goalText.trim()) additions.push(`## Active long-running goal and audit policy\n<active-goal>\n${this.goalText.trim()}\n</active-goal>\nTreat this as the durable objective for the current work. Break it into verifiable milestones, keep checking completed work against the objective and actual evidence, and do not report the goal complete until its acceptance criteria are demonstrably satisfied. When a key requirement or tradeoff is unclear, use the ask_user tool to obtain confirmation before committing to an assumption. Use the installed goal/audit capabilities when useful for sustained work.`);
-            additions.push(...this.projectSystemPrompt(sessionManager.getSessionFile()));
+            additions.push(...this.projectStore.projectSystemPrompt(sessionManager.getSessionFile()));
             return additions.length ? [...base, ...additions] : base;
           },
           // Passing config programmatically bypasses pi-mcp-adapter host discovery.
@@ -584,15 +606,22 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async newSession(projectId?: string): Promise<void> {
-    // A brand-new conversation without an explicit project belongs to the
-    // default "临时对话" workspace, so it stays reachable after switching.
-    if (!projectId && resolve(this.cwd) !== resolve(this.defaultWorkspacePath)) {
-      await this.dispose();
-      this.cwd = resolve(this.defaultWorkspacePath);
+    const project = projectId ? this.projectStore.requireProject(projectId) : null;
+    // A projectless conversation belongs to the default "临时对话" workspace, and a
+    // project session belongs to the project's main workspace, so both stay reachable
+    // after switching. Switch cwd first when the desired workspace differs.
+    const targetCwd = projectId ? (project?.mainWorkspacePath ?? null) : this.defaultWorkspacePath;
+    if (targetCwd && resolve(targetCwd) !== resolve(this.cwd)) {
+      this.cwd = resolve(targetCwd);
       this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
       this.lastMcpStatus = null;
       await this.createRuntime();
       this.emit("log", "info", `工作区已切换: ${this.cwd}`);
+      // The freshly created session now belongs to the selected project.
+      if (project) {
+        const newFile = this.activeEntry().runtime.session.sessionFile;
+        if (newFile) await this.projectStore.assignSessionToProject(newFile, project.id);
+      }
       this.pushState();
       await this.emitSessions();
       this.emit("workspaces", this.listWorkspaces());
@@ -600,13 +629,13 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     }
     const active = this.activeEntry();
     const inheritedProject = projectId
-      ? this.requireProject(projectId)
-      : this.projectForSessionFile(active.runtime.session.sessionFile);
+      ? project
+      : this.projectStore.projectForSessionFile(active.runtime.session.sessionFile);
     const sessionDir = active.runtime.session.sessionManager.getSessionDir();
     const entry = await this.createRuntimeForManager(SessionManager.create(this.cwd, sessionDir));
     this.runtimes.set(entry.id, entry);
     this.activeRuntimeId = entry.id;
-    if (inheritedProject && entry.runtime.session.sessionFile) await this.assignSessionToProject(entry.runtime.session.sessionFile, inheritedProject.id);
+    if (inheritedProject && entry.runtime.session.sessionFile) await this.projectStore.assignSessionToProject(entry.runtime.session.sessionFile, inheritedProject.id);
     this.pushState();
     await this.emitSessions();
   }
@@ -616,7 +645,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (existing) {
       this.activeRuntimeId = existing.id;
     } else {
-      const sessionManager = SessionManager.open(resolve(file), undefined, this.cwd);
+      const sessionManager = SessionManager.open(resolve(file));
       const entry = await this.createRuntimeForManager(sessionManager);
       this.runtimes.set(entry.id, entry);
       this.activeRuntimeId = entry.id;
@@ -631,7 +660,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     const info = infos.find((item) => resolve(item.path) === target);
     if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
     const runtime = this.findRuntimeByFile(target);
-    const currentProject = this.projectForSessionFile(target);
+    const currentProject = this.projectStore.projectForSessionFile(target);
     let replacement: RuntimeEntry | undefined;
     if (runtime?.id === this.activeRuntimeId) {
       if (this.runtimes.size > 1) {
@@ -644,12 +673,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       if (!replacement) throw new Error("Unable to select a replacement session");
       this.activeRuntimeId = replacement.id;
     }
-    for (const project of this.projects) {
-      const before = project.sessionFiles.length;
-      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
-      if (project.sessionFiles.length !== before) project.updatedAt = Date.now();
-    }
-    this.saveProjects();
+    this.projectStore.removeSessionFromProjects(target);
     if (runtime) {
       this.runtimes.delete(runtime.id);
       this.promptQueues.delete(runtime.id);
@@ -672,7 +696,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
     if (this.archivedSessions.has(target)) throw new Error("对话已归档");
 
-    const project = this.projectForSessionFile(target);
+    const project = this.projectStore.projectForSessionFile(target);
     this.archivedSessions.set(target, {
       file: target,
       name: info.name,
@@ -685,11 +709,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     });
     this.saveArchivedSessions();
 
-    if (project) {
-      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
-      project.updatedAt = Date.now();
-      this.saveProjects();
-    }
+    if (project) this.projectStore.removeSessionFromProjects(target);
 
     const runtime = this.findRuntimeByFile(target);
     let replacement: RuntimeEntry | undefined;
@@ -727,13 +747,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
     this.archivedSessions.delete(target);
     this.saveArchivedSessions();
 
-    const project = this.projects.find((item) => item.id === archived.projectId);
-    if (project && !project.sessionFiles.some((item) => resolve(item) === target)) {
-      project.sessionFiles.push(target);
-      project.updatedAt = Date.now();
-      this.saveProjects();
-      await this.reloadProjectRuntimes(project.id);
-    }
+    const changedProjectId = archived.projectId ? this.projectStore.restoreSessionToProject(archived.projectId, target) : null;
+    if (changedProjectId) await this.reloadProjectRuntimes(changedProjectId);
     this.pushState();
     await this.emitSessions();
   }
@@ -755,23 +770,23 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   async listSessions(): Promise<SessionMeta[]> {
-    const infos = await SessionManager.list(this.cwd);
-    return infos
-      .filter((info) => !this.archivedSessions.has(resolve(info.path)))
-      .map((i) => ({
+    const infos = await SessionManager.listAll();
+    const out: SessionMeta[] = [];
+    for (const i of infos) {
+      if (this.archivedSessions.has(resolve(i.path))) continue;
+      const project = this.projectStore.projectForSessionFile(i.path);
+      if (project?.archived) continue;
+      out.push({
         id: i.id,
         file: i.path,
         name: i.name,
         createdAt: i.created.getTime(),
         messageCount: i.messageCount,
         firstMessage: i.firstMessage,
-        ...(this.projectForSessionFile(i.path)
-          ? {
-              projectId: this.projectForSessionFile(i.path)?.id,
-              projectName: this.projectForSessionFile(i.path)?.name,
-            }
-          : {}),
-      }));
+        ...(project ? { projectId: project.id, projectName: project.name } : {}),
+      });
+    }
+    return out;
   }
 
   private loadArchivedSessions(): void {
@@ -915,83 +930,26 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   // ---------------------------------------------------------------- agents
 
-  private defaultAgent(): AgentProfile {
-    return { id: "default", name: "默认助手", description: "不附加额外提示词", prompt: "", memory: "", builtIn: true };
-  }
-
-  private loadAgents(): void {
-    try {
-      if (existsSync(this.agentsFile)) {
-        const parsed = JSON.parse(readFileSync(this.agentsFile, "utf8")) as { agents?: AgentProfile[]; activeAgentId?: string };
-        this.agents = (parsed.agents ?? []).filter((agent) => agent && typeof agent.id === "string" && typeof agent.name === "string" && typeof agent.prompt === "string")
-          .map((agent) => ({ ...agent, memory: typeof agent.memory === "string" ? agent.memory : "" }));
-        this.activeAgentId = parsed.activeAgentId ?? "default";
-      }
-    } catch {
-      this.agents = [];
-      this.activeAgentId = "default";
-    }
-    if (!this.agents.some((agent) => agent.id === "default")) this.agents.unshift(this.defaultAgent());
-    if (!this.agents.some((agent) => agent.id === this.activeAgentId)) this.activeAgentId = "default";
-    this.writeAgents();
-  }
-
-  private writeAgents(): void {
-    writeFileSync(this.agentsFile, JSON.stringify({ agents: this.agents, activeAgentId: this.activeAgentId }, null, 2) + "\n", "utf8");
-  }
-
   listAgents(): AgentProfile[] {
-    return this.agents.map((agent) => ({ ...agent }));
+    return this.agentStore.listAgents();
   }
 
   getActiveAgent(): AgentProfile {
-    return this.agents.find((agent) => agent.id === this.activeAgentId) ?? this.defaultAgent();
+    return this.agentStore.getActiveAgent();
   }
 
   async saveAgent(agent: Omit<AgentProfile, "builtIn">): Promise<AgentProfile> {
-    const name = agent.name.trim();
-    if (!name) throw new Error("Agent 名称不能为空");
-    const id = agent.id.trim();
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new Error("Agent ID 只能包含字母、数字、下划线和连字符");
-    const memory = (agent.memory ?? "").trim();
-    if (memory.length > 16_000) throw new Error("Agent 长期记忆最多 16,000 个字符");
-    if (containsSensitiveMemory(memory)) throw new Error("长期记忆疑似包含密钥、令牌或密码，已拒绝保存");
-    if (id === "default") {
-      const index = this.agents.findIndex((item) => item.id === "default");
-      this.agents[index] = { ...this.defaultAgent(), memory };
-      this.writeAgents();
-      if (this.started) await this.activeEntry().runtime.session.reload();
-      this.pushState();
-      return { ...this.agents[index] };
-    }
-    const next: AgentProfile = { id, name, description: agent.description.trim(), prompt: agent.prompt.trim(), memory };
-    const index = this.agents.findIndex((item) => item.id === id);
-    if (index >= 0) this.agents[index] = { ...this.agents[index], ...next };
-    else this.agents.push(next);
-    this.writeAgents();
-    if (id === this.activeAgentId && this.started) await this.activeEntry().runtime.session.reload();
-    this.pushState();
-    return { ...(this.agents.find((item) => item.id === id) as AgentProfile) };
+    return this.agentStore.saveAgent(agent);
   }
 
   async removeAgent(id: string): Promise<void> {
-    if (id === "default") throw new Error("默认助手不能删除");
-    const before = this.agents.length;
-    this.agents = this.agents.filter((agent) => agent.id !== id);
-    if (this.agents.length === before) throw new Error("Agent 不存在");
-    if (this.activeAgentId === id) this.activeAgentId = "default";
-    this.writeAgents();
-    if (this.started) await this.activeEntry().runtime.session.reload();
-    this.pushState();
+    return this.agentStore.removeAgent(id);
   }
 
   async setActiveAgent(id: string): Promise<void> {
-    if (!this.agents.some((agent) => agent.id === id)) throw new Error("Agent 不存在");
-    this.activeAgentId = id;
-    this.writeAgents();
-    if (this.started) await this.activeEntry().runtime.session.reload();
-    this.pushState();
+    return this.agentStore.setActiveAgent(id);
   }
+
 
   private readMcpConfig(): McpConfig {
     if (!this.mcpConfigPath) return { mcpServers: {} };
@@ -1019,403 +977,76 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   // --------------------------------------------------------------- projects
 
-  private loadProjects(): void {
-    try {
-      if (!existsSync(this.projectsFile)) return;
-      const parsed = JSON.parse(readFileSync(this.projectsFile, "utf8")) as { projects?: Project[] };
-      this.projects = Array.isArray(parsed.projects) ? parsed.projects.map((project) => ({
-        ...project,
-        workspacePaths: this.normalizeWorkspacePaths((project as { workspacePaths?: unknown; workspacePath?: unknown }).workspacePaths ?? (project as { workspacePath?: unknown }).workspacePath),
-        sessionFiles: Array.isArray(project.sessionFiles) ? project.sessionFiles.map((file) => resolve(file)) : [],
-        memories: Array.isArray(project.memories) ? project.memories : [],
-        documents: Array.isArray(project.documents)
-          ? project.documents.map((document) => ({ ...document, name: repairUploadedFilename(document.name) }))
-          : [],
-      })) : [];
-    } catch {
-      this.projects = [];
-    }
-  }
-
-  private normalizeWorkspacePaths(value: unknown): string[] {
-    const raw = Array.isArray(value) ? value : value ? [value] : [];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of raw) {
-      if (typeof item !== "string" || !item.trim()) continue;
-      const abs = resolve(this.cwd, item.trim());
-      if (seen.has(abs)) continue;
-      seen.add(abs);
-      out.push(abs);
-    }
-    return out;
-  }
-
-  private saveProjects(): void {
-    mkdirSync(dirname(this.projectsFile), { recursive: true });
-    writeFileSync(this.projectsFile, JSON.stringify({ projects: this.projects }, null, 2), "utf8");
-  }
-
-  private loadProjectIndex(): void {
-    try {
-      if (!existsSync(this.projectIndexFile)) return;
-      const parsed = JSON.parse(readFileSync(this.projectIndexFile, "utf8")) as Record<string, { text?: string; indexedAt?: number }>;
-      this.projectIndex = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value?.text === "string").map(([key, value]) => [key, { text: value.text ?? "", indexedAt: value.indexedAt ?? 0 }]));
-    } catch {
-      this.projectIndex = {};
-    }
-  }
-
-  private saveProjectIndex(): void {
-    mkdirSync(dirname(this.projectIndexFile), { recursive: true });
-    writeFileSync(this.projectIndexFile, JSON.stringify(this.projectIndex, null, 2), "utf8");
-  }
-
-  private extractSearchText(value: unknown): string {
-    if (typeof value === "string") return value;
-    if (Array.isArray(value)) return value.map((item) => this.extractSearchText(item)).filter(Boolean).join("\n");
-    if (!value || typeof value !== "object") return "";
-    const record = value as Record<string, unknown>;
-    return [record.text, record.thinking, record.content, record.output, record.arguments].map((item) => this.extractSearchText(item)).filter(Boolean).join("\n");
-  }
-
-  private async extractDocumentText(document: ProjectDocument): Promise<string> {
-    const absolute = resolve(document.path);
-    if (!existsSync(absolute) || !statSync(absolute).isFile()) return "";
-    const size = statSync(absolute).size;
-    if (size > 8 * 1024 * 1024) return "";
-    const ext = extname(absolute).toLowerCase();
-    if ([".txt", ".md", ".markdown", ".json", ".csv", ".ts", ".tsx", ".js", ".jsx", ".css", ".html", ".htm", ".xml", ".yaml", ".yml", ".log"].includes(ext)) {
-      return decodeTextBuffer(readFileSync(absolute)).slice(0, 1_000_000);
-    }
-    const buffer = readFileSync(absolute);
-    const parsers = await import("./parsers.ts");
-    if (ext === ".docx") return this.extractSearchText((await parsers.parseDocx(buffer)).replace(/<[^>]+>/g, " "));
-    if (ext === ".pptx") return this.extractSearchText((await parsers.parsePptx(buffer)).replace(/<[^>]+>/g, " "));
-    if (ext === ".xlsx" || ext === ".xls") {
-      return parsers.parseXlsx(buffer).map((sheet) => `## ${sheet.name}\n${sheet.rows.map((row) => row.join("\t")).join("\n")}`).join("\n\n");
-    }
-    return "";
-  }
-
-  private async indexProjectDocument(document: ProjectDocument): Promise<void> {
-    const text = await this.extractDocumentText(document);
-    this.projectIndex[document.id] = { text, indexedAt: Date.now() };
-    document.indexedAt = this.projectIndex[document.id].indexedAt;
-    this.saveProjectIndex();
-    this.saveProjects();
-  }
-
-  private removeProjectDocumentIndex(documentId: string): void {
-    delete this.projectIndex[documentId];
-    this.saveProjectIndex();
-  }
-
-  private makeSnippet(text: string, query: string): { snippet: string; matches: number } {
-    const normalized = text.toLocaleLowerCase();
-    const needle = query.toLocaleLowerCase();
-    let matches = 0;
-    let from = 0;
-    let first = -1;
-    while (needle && (from = normalized.indexOf(needle, from)) >= 0) {
-      if (first < 0) first = from;
-      matches++;
-      from += needle.length;
-    }
-    if (first < 0) return { snippet: text.slice(0, 180).replace(/\s+/g, " "), matches: 0 };
-    const start = Math.max(0, first - 100);
-    const end = Math.min(text.length, first + query.length + 140);
-    return { snippet: `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`, matches };
-  }
-
-  async searchProject(projectId: string, query: string): Promise<ProjectSearchResult[]> {
-    const project = this.requireProject(projectId);
-    const needle = query.trim();
-    if (!needle) return [];
-    const results: ProjectSearchResult[] = [];
-    const sessions = await this.listSessions();
-    for (const file of project.sessionFiles) {
-      if (!existsSync(file)) continue;
-      let text = "";
-      try {
-        const lines = decodeTextBuffer(readFileSync(file)).split(/\r?\n/);
-        text = lines.map((line) => { try { return this.extractSearchText(JSON.parse(line)); } catch { return ""; } }).filter(Boolean).join("\n");
-      } catch { continue; }
-      const hit = this.makeSnippet(text, needle);
-      if (hit.matches > 0) {
-        const session = sessions.find((item) => resolve(item.file) === resolve(file));
-        results.push({ kind: "session", id: session?.id ?? file, title: session?.name || session?.firstMessage || basename(file), file, snippet: hit.snippet, matches: hit.matches });
-      }
-    }
-    for (const document of project.documents) {
-      const indexed = this.projectIndex[document.id];
-      if (!indexed) {
-        try { await this.indexProjectDocument(document); } catch { /* keep metadata searchable */ }
-      }
-      const text = this.projectIndex[document.id]?.text ?? "";
-      const hit = this.makeSnippet(text, needle);
-      if (hit.matches > 0) results.push({ kind: "document", id: document.id, documentId: document.id, title: document.name, file: document.path, snippet: hit.snippet, matches: hit.matches });
-    }
-    return results.sort((a, b) => b.matches - a.matches).slice(0, 50);
-  }
-
-  private projectSummary(project: Project): ProjectSummary {
-    return {
-      id: project.id,
-      name: project.name,
-      description: project.description,
-      workspacePaths: project.workspacePaths ?? [],
-      sessionCount: project.sessionFiles.length,
-      memoryCount: project.memories.length,
-      documentCount: project.documents.length,
-      updatedAt: project.updatedAt,
-    };
-  }
-
-  private projectForSessionFile(file?: string): Project | null {
-    if (!file) return null;
-    const target = resolve(file);
-    return this.projects.find((project) => project.sessionFiles.some((item) => resolve(item) === target)) ?? null;
-  }
-
-  private requireProject(id: string): Project {
-    const project = this.projects.find((item) => item.id === id);
-    if (!project) throw new Error("Project not found");
-    return project;
-  }
-
   listProjects(): ProjectSummary[] {
-    return this.projects.map((project) => this.projectSummary(project));
+    return this.projectStore.listProjects();
+  }
+
+  listArchivedProjects(): ProjectSummary[] {
+    return this.projectStore.listArchivedProjects();
   }
 
   getProject(id: string): Project {
-    return structuredClone(this.requireProject(id));
+    return this.projectStore.getProject(id);
   }
 
-  createProject(input: { name: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string; instructions?: string }): Project {
-    const name = input.name.trim();
-    if (!name) throw new Error("Project name is required");
-    if (name.length > 120) throw new Error("Project name is too long");
-    const now = Date.now();
-    const project: Project = {
-      id: randomUUID(),
-      name,
-      description: (input.description ?? "").trim(),
-      workspacePaths: this.normalizeWorkspacePaths(input.workspacePaths ?? input.workspacePath),
-      instructions: (input.instructions ?? "").trim(),
-      sessionFiles: [],
-      memories: [],
-      documents: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.projects.push(project);
-    this.saveProjects();
-    return structuredClone(project);
+  createProject(input: { name: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string; mainWorkspacePath?: string | null; instructions?: string }): Project {
+    return this.projectStore.createProject(input);
   }
 
-  async updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string | null; instructions?: string }): Promise<Project> {
-    const project = this.requireProject(id);
-    if (patch.name !== undefined) {
-      const name = patch.name.trim();
-      if (!name) throw new Error("Project name is required");
-      project.name = name;
-    }
-    if (patch.description !== undefined) project.description = patch.description.trim();
-    if (patch.workspacePaths !== undefined || patch.workspacePath !== undefined) project.workspacePaths = this.normalizeWorkspacePaths(patch.workspacePaths ?? patch.workspacePath);
-    if (patch.instructions !== undefined) project.instructions = patch.instructions.trim();
-    project.updatedAt = Date.now();
-    this.saveProjects();
-    await this.reloadProjectRuntimes(project.id);
-    this.pushState();
-    return structuredClone(project);
+  async updateProject(id: string, patch: { name?: string; description?: string; workspacePaths?: string[] | string | null; workspacePath?: string | null; mainWorkspacePath?: string | null; instructions?: string }): Promise<Project> {
+    return this.projectStore.updateProject(id, patch);
   }
 
   async removeProject(id: string): Promise<void> {
-    const project = this.requireProject(id);
-    const sessionFiles = new Set(project.sessionFiles.map((file) => resolve(file)));
-    this.projects = this.projects.filter((item) => item.id !== id);
-    this.saveProjects();
-    await Promise.all([...this.runtimes.values()]
-      .filter((entry) => {
-        const sessionFile = entry.runtime.session.sessionFile;
-        return !!sessionFile && sessionFiles.has(resolve(sessionFile));
-      })
-      .map((entry) => entry.runtime.session.reload()));
-    this.pushState();
-    await this.emitSessions();
+    return this.projectStore.removeProject(id);
+  }
+
+  async archiveProject(id: string): Promise<void> {
+    return this.projectStore.archiveProject(id);
+  }
+
+  async restoreProject(id: string): Promise<void> {
+    return this.projectStore.restoreProject(id);
   }
 
   async assignSessionToProject(file: string, projectId: string | null): Promise<ProjectSummary | null> {
-    const target = resolve(file);
-    const assigned = projectId ? this.requireProject(projectId) : null;
-    const changedProjects = this.projects.filter((project) => project.sessionFiles.some((item) => resolve(item) === target));
-    for (const project of this.projects) {
-      project.sessionFiles = project.sessionFiles.filter((item) => resolve(item) !== target);
-    }
-    if (assigned) {
-      assigned.sessionFiles.push(target);
-    }
-    const now = Date.now();
-    for (const project of changedProjects) project.updatedAt = now;
-    if (assigned && !changedProjects.includes(assigned)) assigned.updatedAt = now;
-    this.saveProjects();
-    const runtime = this.findRuntimeByFile(target);
-    if (runtime) await runtime.runtime.session.reload();
-    this.pushState();
-    await this.emitSessions();
-    return assigned ? this.projectSummary(assigned) : null;
+    return this.projectStore.assignSessionToProject(file, projectId);
+  }
+
+  async searchProject(projectId: string, query: string): Promise<ProjectSearchResult[]> {
+    return this.projectStore.searchProject(projectId, query);
   }
 
   async saveProjectMemory(projectId: string, input: { id?: string; content: string; type?: ProjectMemoryType; pinned?: boolean; sourceSessionId?: string }): Promise<ProjectMemory> {
-    const project = this.requireProject(projectId);
-    const content = input.content.trim();
-    if (!content) throw new Error("Memory content is required");
-    if (content.length > 16000) throw new Error("Memory is limited to 16,000 characters");
-    if (containsSensitiveMemory(content)) throw new Error("Memory appears to contain a secret or token");
-    const now = Date.now();
-    const existing = input.id ? project.memories.find((memory) => memory.id === input.id) : undefined;
-    const memory: ProjectMemory = existing ?? {
-      id: randomUUID(), projectId, content: "", type: "fact", pinned: false, createdAt: now, updatedAt: now,
-    };
-    memory.content = content;
-    memory.type = input.type ?? memory.type;
-    memory.pinned = input.pinned ?? memory.pinned;
-    memory.sourceSessionId = input.sourceSessionId ?? memory.sourceSessionId;
-    memory.updatedAt = now;
-    if (!existing) project.memories.push(memory);
-    project.updatedAt = now;
-    this.saveProjects();
-    await this.reloadProjectRuntimes(projectId);
-    this.pushState();
-    return structuredClone(memory);
+    return this.projectStore.saveProjectMemory(projectId, input);
   }
 
   async removeProjectMemory(projectId: string, memoryId: string): Promise<void> {
-    const project = this.requireProject(projectId);
-    project.memories = project.memories.filter((memory) => memory.id !== memoryId);
-    project.updatedAt = Date.now();
-    this.saveProjects();
-    await this.reloadProjectRuntimes(projectId);
-    this.pushState();
+    return this.projectStore.removeProjectMemory(projectId, memoryId);
   }
 
   async addProjectDocument(projectId: string, input: { path: string; name?: string; summary?: string }): Promise<ProjectDocument> {
-    const project = this.requireProject(projectId);
-    const absolute = resolve(this.cwd, input.path);
-    if (!existsSync(absolute) || !statSync(absolute).isFile()) throw new Error("Document file not found");
-    const existing = project.documents.find((document) => resolve(document.path) === absolute);
-    if (existing) return structuredClone(existing);
-    const document: ProjectDocument = {
-      id: randomUUID(), projectId, name: (input.name ?? basename(absolute)).trim() || basename(absolute), path: absolute,
-      mime: MIME_BY_EXT[extname(absolute).toLowerCase()] ?? "application/octet-stream", size: statSync(absolute).size,
-      summary: (input.summary ?? "").trim(), addedAt: Date.now(),
-    };
-    project.documents.push(document);
-    project.updatedAt = Date.now();
-    await this.indexProjectDocument(document);
-    await this.reloadProjectRuntimes(projectId);
-    this.pushState();
-    return structuredClone(document);
+    return this.projectStore.addProjectDocument(projectId, input);
   }
 
   async removeProjectDocument(projectId: string, documentId: string): Promise<void> {
-    const project = this.requireProject(projectId);
-    const removed = project.documents.find((document) => document.id === documentId);
-    project.documents = project.documents.filter((document) => document.id !== documentId);
-    if (removed) this.removeProjectDocumentIndex(removed.id);
-    project.updatedAt = Date.now();
-    this.saveProjects();
-    await this.reloadProjectRuntimes(projectId);
-    this.pushState();
+    return this.projectStore.removeProjectDocument(projectId, documentId);
   }
 
   private async reloadProjectRuntimes(projectId: string): Promise<void> {
     await Promise.all([...this.runtimes.values()]
-      .filter((entry) => this.projectForSessionFile(entry.runtime.session.sessionFile)?.id === projectId)
+      .filter((entry) => this.projectStore.projectForSessionFile(entry.runtime.session.sessionFile)?.id === projectId)
       .map((entry) => entry.runtime.session.reload()));
-  }
-
-  private projectSystemPrompt(sessionFile?: string): string[] {
-    const project = this.projectForSessionFile(sessionFile);
-    if (!project) return [];
-    const additions: string[] = [];
-    const workspaces = project.workspacePaths ?? [];
-    if (project.description || workspaces.length) additions.push("## Project context\n<project-context>\nThis conversation belongs to the project \"" + project.name + "\".\n" + (project.description ? project.description + "\n" : "") + (workspaces.length ? "Project workspaces:\n" + workspaces.map((workspace) => "- " + workspace).join("\n") + "\n" : "") + "</project-context>\nTreat this as shared context across the project's conversations.");
-    if (project.instructions) additions.push("## Project instructions\n<project-instructions>\n" + project.instructions + "\n</project-instructions>");
-    const memories = [...project.memories].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt).slice(0, 20);
-    if (memories.length) additions.push("## Project memory\n<project-memory>\n" + memories.map((memory) => "- [" + memory.type + (memory.pinned ? ", pinned" : "") + "] " + memory.content).join("\n") + "\n</project-memory>");
-    if (project.documents.length) {
-      const references = project.documents.map((document) => "- " + document.name + ": " + document.path + (document.summary ? " (" + document.summary + ")" : ""));
-      const excerpts: string[] = [];
-      let budget = 30000;
-      for (const document of project.documents) {
-        if (budget <= 0 || !document.mime?.startsWith("text/") || (document.size ?? 0) > 200000) continue;
-        try {
-          const text = decodeTextBuffer(readFileSync(document.path)).slice(0, Math.min(8000, budget));
-          if (text.trim()) { excerpts.push("### " + document.name + "\n" + text); budget -= text.length; }
-        } catch { /* document may have moved; keep its reference */ }
-      }
-      additions.push("## Project documents\n<project-documents>\n" + references.join("\n") + (excerpts.length ? "\n\nSelected text excerpts:\n" + excerpts.join("\n\n") : "") + "\n</project-documents>\nUse the listed paths and workspace tools to inspect the source documents when needed.");
-    }
-    return additions;
   }
 
   // ------------------------------------------------------------- workspaces
 
-  private loadWorkspaces(): void {
-    try {
-      if (existsSync(this.workspacesFile)) {
-        const data = JSON.parse(readFileSync(this.workspacesFile, "utf8")) as { paths?: string[]; active?: string };
-        this.customWorkspaces = Array.isArray(data.paths) ? data.paths : [];
-        this.lastWorkspacePath = typeof data.active === "string" ? data.active : "";
-      }
-    } catch {
-      this.customWorkspaces = [];
-    }
-  }
-
-  private saveWorkspaces(): void {
-    try {
-      mkdirSync(resolve(this.workspacesFile, ".."), { recursive: true });
-      writeFileSync(
-        this.workspacesFile,
-        JSON.stringify({ paths: this.customWorkspaces, active: this.lastWorkspacePath || this.cwd }, null, 2),
-        "utf8",
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-
   listWorkspaces(): WorkspaceInfo[] {
-    const seen = new Set<string>();
-    const out: WorkspaceInfo[] = [];
-    const push = (p: string) => {
-      const abs = resolve(p);
-      if (seen.has(abs)) return;
-      seen.add(abs);
-      out.push({
-        path: abs,
-        name: abs === resolve(this.defaultWorkspacePath) ? "临时对话" : basename(abs) || abs,
-        current: abs === resolve(this.cwd),
-      });
-    };
-    push(this.defaultWorkspacePath);
-    push(this.cwd);
-    for (const p of this.customWorkspaces) push(p);
-    return out;
+    return this.workspaceManager.list();
   }
 
   addWorkspace(path: string): WorkspaceInfo[] {
-    const abs = resolve(path);
-    if (!existsSync(abs) || !statSync(abs).isDirectory()) {
-      throw new Error(`目录不存在: ${abs}`);
-    }
-    if (!this.customWorkspaces.includes(abs)) this.customWorkspaces.push(abs);
-    this.saveWorkspaces();
-    this.emit("workspaces", this.listWorkspaces());
-    return this.listWorkspaces();
+    return this.workspaceManager.add(path);
   }
 
   async switchWorkspace(path: string): Promise<void> {
@@ -1428,12 +1059,8 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
       return;
     }
 
-    await this.dispose();
-
     this.cwd = abs;
-    if (!this.customWorkspaces.includes(abs)) this.customWorkspaces.push(abs);
-    this.lastWorkspacePath = abs;
-    this.saveWorkspaces();
+    this.workspaceManager.registerActive(abs);
 
     this.settingsManager = SettingsManager.create(this.cwd, this.agentDir);
     this.lastMcpStatus = null;
@@ -1445,150 +1072,24 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   listWorkspaceFiles(relPath: string, root?: string): FileEntry[] {
-    const absRoot = resolve(root ? root : this.cwd);
-    const base = relPath ? resolve(absRoot, relPath) : absRoot;
-    if (base !== absRoot && !base.startsWith(absRoot + sep)) throw new Error("路径越界，拒绝读取");
-    if (!existsSync(base) || !statSync(base).isDirectory()) throw new Error(`目录不存在: ${relPath || "/"}`);
-    const entries = readdirSync(base, { withFileTypes: true })
-      .filter((d) => !d.name.startsWith(".") && d.name !== "node_modules" && d.name !== "uploads")
-      .map((d) => {
-        const abs = join(base, d.name);
-        const isDir = d.isDirectory();
-        let size: number | undefined;
-        if (!isDir) {
-          try {
-            size = statSync(abs).size;
-          } catch {
-            /* ignore */
-          }
-        }
-        return {
-          name: d.name,
-          path: relPath ? `${relPath.split(sep).join("/")}/${d.name}` : d.name,
-          isDir,
-          size,
-        };
-      })
-      .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-    return entries;
+    return this.workspaceManager.listFiles(relPath, root);
   }
 
   /** Resolve a workspace-relative path, rejecting traversal outside the given root. */
   resolveWorkspacePath(relPath: string, root?: string): string {
-    const absRoot = resolve(root ? root : this.cwd);
-    const abs = resolve(absRoot, relPath);
-    if (abs !== absRoot && !abs.startsWith(absRoot + sep)) throw new Error("路径越界，拒绝读取");
-    return abs;
+    return this.workspaceManager.resolvePath(relPath, root);
   }
 
-  /** Read a workspace file for preview: text head (≤1MB) or full image (≤8MB). */
   moveWorkspaceFile(sourceRelPath: string, destinationDir: string, root?: string): void {
-    const absRoot = resolve(root ? root : this.cwd);
-    const sourceAbs = this.resolveWorkspacePath(sourceRelPath, root);
-    const destAbs = resolve(destinationDir);
-    if (destAbs !== absRoot && !destAbs.startsWith(absRoot + sep)) throw new Error("目标文件夹不在当前工作区");
-    if (!existsSync(destAbs) || !statSync(destAbs).isDirectory()) throw new Error("目标文件夹不存在");
-    if (!existsSync(sourceAbs)) throw new Error("源文件不存在");
-    if (resolve(dirname(sourceAbs)) === destAbs) return;
-
-    const movedAbs = join(destAbs, basename(sourceAbs));
-    if (existsSync(movedAbs)) throw new Error("目标位置已存在同名文件或文件夹");
-    renameSync(sourceAbs, movedAbs);
-
-    let changed = false;
-    for (const project of this.projects) {
-      let projectChanged = false;
-      for (const document of project.documents) {
-        const docAbs = resolve(document.path);
-        if (docAbs === sourceAbs) {
-          document.path = movedAbs;
-          projectChanged = true;
-        } else if (docAbs.startsWith(sourceAbs + sep)) {
-          document.path = join(movedAbs, relative(sourceAbs, docAbs));
-          projectChanged = true;
-        }
-      }
-      if (projectChanged) {
-        project.updatedAt = Date.now();
-        changed = true;
-      }
-    }
-    if (changed) this.saveProjects();
+    return this.workspaceManager.moveFile(sourceRelPath, destinationDir, root);
   }
 
   async readWorkspaceFile(relPath: string, root?: string): Promise<WorkspaceFileContent> {
-    const abs = this.resolveWorkspacePath(relPath, root);
-    if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`文件不存在: ${relPath}`);
-
-    const st = statSync(abs);
-    const size = st.size;
-    const mime = MIME_BY_EXT[extname(abs).toLowerCase()] ?? "application/octet-stream";
-    const name = basename(abs);
-    const path = relPath.split(sep).join("/");
-
-    if (mime.startsWith("image/")) {
-      // Small images inline as data URL; oversized ones fall back to the raw stream endpoint.
-      const data =
-        size <= IMAGE_PREVIEW_LIMIT ? (await this.readHead(abs, IMAGE_PREVIEW_LIMIT)).toString("base64") : undefined;
-      return { name, path, size, mime, isBinary: false, content: data ? `data:${mime};base64,${data}` : undefined };
-    }
-
-    // Read only the head of big text files so huge files stay previewable.
-    const limit = Math.min(size, TEXT_PREVIEW_LIMIT);
-    const chunk = await this.readHead(abs, limit);
-    const isBinary = chunk.includes(0);
-    if (isBinary) return { name, path, size, mime, isBinary: true };
-    return {
-      name,
-      path,
-      size,
-      mime,
-      isBinary: false,
-      content: decodeTextBuffer(chunk),
-      truncated: size > chunk.length,
-    };
+    return this.workspaceManager.readFile(relPath, root);
   }
 
-  private readHead(abs: string, limit: number): Promise<Buffer> {
-    return new Promise((resolvePromise, rejectPromise) => {
-      const chunks: Buffer[] = [];
-      const stream = createReadStream(abs, { start: 0, end: Math.max(0, limit - 1) });
-      stream.on("data", (c) => chunks.push(c as Buffer));
-      stream.on("end", () => resolvePromise(Buffer.concat(chunks)));
-      stream.on("error", rejectPromise);
-    });
-  }
-
-  /** Browse an arbitrary absolute directory (used by the workspace folder picker). */
   listDirs(absPath: string): FileEntry[] {
-    const drives: string[] = [];
-    for (const ch of "CDEFGH") {
-      try {
-        if (existsSync(`${ch}:\\`)) drives.push(`${ch}:\\`);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!absPath) {
-      return drives.map((d) => ({ name: d.replace(/\\$/, ""), path: d, isDir: true }));
-    }
-    const target = resolve(absPath);
-    if (!existsSync(target) || !statSync(target).isDirectory()) {
-      throw new Error(`目录不存在: ${absPath}`);
-    }
-    try {
-      const entries = readdirSync(target, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => ({
-          name: d.name,
-          path: join(target, d.name),
-          isDir: true,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-      return entries;
-    } catch (e) {
-      throw new Error(`无法读取目录: ${absPath} (${(e as Error).message})`);
-    }
+    return this.workspaceManager.listDirs(absPath);
   }
 
   // -------------------------------------------------------------- commands
@@ -1660,183 +1161,50 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   // ------------------------------------------------------------- model mgmt
 
-  private modelsJsonPath(): string {
-    return join(this.agentDir, "models.json");
+  
+
+    readModelsJson(): Record<string, unknown> {
+    return this.modelManager.readModelsJson();
   }
 
-  readModelsJson(): Record<string, unknown> {
-    try {
-      const f = this.modelsJsonPath();
-      if (existsSync(f)) {
-        const data = JSON.parse(readFileSync(f, "utf8")) as unknown;
-        if (data && typeof data === "object" && !Array.isArray(data)) return data as Record<string, unknown>;
-      }
-    } catch {
-      /* ignore */
-    }
-    return {};
-  }
-
-  private writeModelsJson(data: Record<string, unknown>): void {
-    mkdirSync(this.agentDir, { recursive: true });
-    writeFileSync(this.modelsJsonPath(), JSON.stringify(data, null, 2) + "\n", "utf8");
-  }
+  
 
   /** Register a custom provider in models.json, then reload the runtime. */
-  registerProviderConfig(name: string, config: Record<string, unknown>): void {
-    if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("提供方名称只能包含字母、数字、._-");
-    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("config 必须是对象");
-    const data = this.readModelsJson();
-    const providers = (data.providers ?? {}) as Record<string, unknown>;
-    providers[name] = config;
-    data.providers = providers;
-    this.writeModelsJson(data);
+    registerProviderConfig(name: string, config: Record<string, unknown>): void {
+    this.modelManager.registerProviderConfig(name, config);
   }
 
   /** Remove a custom provider from models.json, then reload the runtime. */
-  unregisterProviderConfig(name: string): void {
-    const data = this.readModelsJson();
-    const providers = (data.providers ?? {}) as Record<string, unknown>;
-    if (!(name in providers)) throw new Error(`未注册的提供方: ${name}`);
-    delete providers[name];
-    data.providers = providers;
-    this.writeModelsJson(data);
+    unregisterProviderConfig(name: string): void {
+    this.modelManager.unregisterProviderConfig(name);
   }
 
   /** Reload models.json + refresh availability, then push the new state to clients. */
-  async refreshModels(): Promise<{ errors: string[] }> {
-    let result: { errors?: ReadonlyMap<string, Error> } | undefined;
-    try {
-      result = await withTimeout(
-        this.modelRuntime.refresh({ allowNetwork: false }),
-        15_000,
-        "模型刷新超时",
-      );
-    } catch (error) {
-      result = { errors: new Map([[this.agentDir, new Error((error as Error).message)]]) };
-    }
-    this.updateAvailableModels();
-    this.pushState();
-    const errors: string[] = [];
-    for (const [provider, error] of result?.errors ?? new Map()) {
-      errors.push(`${provider}: ${error}`);
-    }
-    return { errors };
+    async refreshModels(): Promise<{ errors: string[] }> {
+    return this.modelManager.refreshModels();
   }
 
   /** Full provider × model catalog with auth/custom flags (for the Models panel). */
-  listModels(): ModelCatalogEntry[] {
-    const providers = this.modelRuntime.getProviders();
-    const customNames = new Set(
-      Object.keys((this.readModelsJson() as { providers?: Record<string, unknown> }).providers ?? {}),
-    );
-    const availableSet = new Set(this.modelRuntime.getAvailableSnapshot().map((m) => `${m.provider}/${m.id}`));
-    return providers.map((p) => {
-      const models = this.modelRuntime.getModels(p.id).map((m) => {
-        const meta = m as unknown as { name?: string; reasoning?: boolean; input?: string[]; contextWindow?: number };
-        return {
-          id: m.id,
-          name: meta.name,
-          reasoning: meta.reasoning,
-          input: meta.input,
-          contextWindow: meta.contextWindow,
-          available: availableSet.has(`${p.id}/${m.id}`),
-        };
-      });
-      const auth = this.modelRuntime.getProviderAuthStatus(p.id);
-      return {
-        provider: p.id,
-        displayName: (p as { displayName?: string }).displayName ?? p.id,
-        isCustom: customNames.has(p.id),
-        authConfigured: !!auth?.configured,
-        authSource: auth?.source,
-        models,
-      };
-    });
+    listModels(): ModelCatalogEntry[] {
+    return this.modelManager.listModels();
   }
 
-  async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
-    const providerId = provider.trim();
-    const key = apiKey.trim();
-    if (!providerId || !key) throw new Error("需要 provider 和 apiKey");
-    // Persist through the app-owned store first so the key survives even if
-    // the in-process refresh below fails, then activate it in the runtime
-    // (process-local overlay) and refresh the provider snapshot.
-    await this.appCredentials.modify(providerId, async () => ({ type: "api_key", key }));
-    await withTimeout(
-      this.modelRuntime.setRuntimeApiKey(providerId, key),
-      15_000,
-      "保存 API Key 超时",
-    );
-    this.pushState();
+    async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
+    return this.modelManager.setProviderApiKey(provider, apiKey);
   }
 
-  async removeProviderApiKey(provider: string): Promise<void> {
-    const providerId = provider.trim();
-    // Clear the process-local runtime overlay first. Its internal refresh is
-    // network-bound (allowNetwork defaults to true), so a slow or failed
-    // availability check must not block the authoritative cleanup below.
-    try {
-      await withTimeout(
-        this.modelRuntime.removeRuntimeApiKey(providerId),
-        15_000,
-        "清除 API Key 超时",
-      );
-    } catch (error) {
-      this.emit("log", "warn", `清除 API Key 时刷新失败（继续清理）: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    // Remove from the app-owned store (memory + auth.json), then force a
-    // network-free refresh so storedProviders immediately matches the file.
-    // Without it, the Models panel keeps reporting the provider as
-    // configured until the app restarts.
-    await this.appCredentials.delete(providerId);
-    try {
-      await withTimeout(
-        this.modelRuntime.refresh({ allowNetwork: false }),
-        15_000,
-        "清除后刷新模型状态超时",
-      );
-    } catch (error) {
-      this.emit("log", "warn", `清除 API Key 后刷新模型状态失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    this.updateAvailableModels();
-    this.pushState();
+    async removeProviderApiKey(provider: string): Promise<void> {
+    return this.modelManager.removeProviderApiKey(provider);
   }
 
-  private updateAvailableModels(): void {
-    const available = this.modelRuntime?.getAvailableSnapshot() ?? [];
-    this.availableModels = available.map((m) => {
-      const meta = m as unknown as { displayName?: string; thinkingLevels?: string[]; kind?: string; contextWindow?: number };
-      return {
-        provider: m.provider,
-        id: m.id,
-        displayName: meta.displayName ?? `${m.provider}/${m.id}`,
-        thinking: meta.thinkingLevels ?? [],
-        kind: meta.kind,
-        contextWindow: meta.contextWindow,
-      };
-    });
-  }
-  private availableModelInfos(): ModelInfo[] {
-    const snap = this.modelRuntime?.getAvailableSnapshot() ?? [];
-    if (snap.length === 0 && this.availableModels.length > 0) return this.availableModels;
-    return snap.map((m) => {
-      const meta = m as unknown as { displayName?: string; kind?: string; contextWindow?: number };
-      return {
-        provider: m.provider,
-        id: m.id,
-        displayName: meta.displayName ?? `${m.provider}/${m.id}`,
-        thinking: (m as { thinkingLevels?: string[] }).thinkingLevels ?? [],
-        kind: meta.kind,
-        contextWindow: meta.contextWindow,
-      };
-    });
-  }
+  
+  
 
   // ------------------------------------------------------------------ state
 
   getState(): AppState {
-    const session = this.runtimes.get(this.activeRuntimeId)?.runtime.session;
+    const entry = this.runtimes.get(this.activeRuntimeId);
+    const session = entry?.runtime.session;
     const model = session?.model;
     return {
       messages: serializeMessages(session?.messages ?? []),
@@ -1849,17 +1217,18 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
             thinking: (model as { thinkingLevels?: string[] }).thinkingLevels ?? [],
           }
         : null,
+      modelFallbackMessage: entry?.runtime.modelFallbackMessage,
       thinkingLevel: session?.thinkingLevel ?? "off",
       isStreaming: session?.isStreaming ?? false,
       cwd: this.cwd,
-      availableModels: this.availableModelInfos(),
-      activeAgent: this.getActiveAgent(),
+      availableModels: this.modelManager.availableModelInfos(),
+      activeAgent: this.agentStore.getActiveAgent(),
       mcp: this.lastMcpStatus as unknown as AppState["mcp"],
       sessionFile: session?.sessionFile,
       sessionId: session?.sessionId,
       longTasks: [...(this.longTasks.get(this.activeRuntimeId) ?? [])],
-      project: this.projectForSessionFile(session?.sessionFile)
-        ? this.projectSummary(this.projectForSessionFile(session?.sessionFile) as Project)
+      project: this.projectStore.projectForSessionFile(session?.sessionFile)
+        ? this.projectStore.projectSummary(this.projectStore.projectForSessionFile(session?.sessionFile) as Project)
         : null,
     };
   }
@@ -1875,23 +1244,6 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 }
 
 // ------------------------------------------------------------------ serialize
-
-const TEXT_PREVIEW_LIMIT = 1024 * 1024; // bytes of text content returned to the client
-const IMAGE_PREVIEW_LIMIT = 8 * 1024 * 1024;
-
-const MIME_BY_EXT: Record<string, string> = {
-  ".ts": "text/typescript", ".tsx": "text/typescript", ".js": "text/javascript", ".jsx": "text/javascript",
-  ".mjs": "text/javascript", ".cjs": "text/javascript", ".json": "application/json", ".md": "text/markdown",
-  ".css": "text/css", ".scss": "text/scss", ".html": "text/html", ".htm": "text/html",
-  ".py": "text/x-python", ".go": "text/x-go", ".rs": "text/x-rust", ".java": "text/x-java",
-  ".c": "text/x-c", ".h": "text/x-c", ".cpp": "text/x-c++", ".hpp": "text/x-c++",
-  ".rb": "text/x-ruby", ".sh": "text/x-sh", ".bat": "text/x-bat", ".ps1": "text/x-powershell",
-  ".yaml": "text/yaml", ".yml": "text/yaml", ".toml": "text/toml", ".xml": "text/xml", ".sql": "text/sql",
-  ".txt": "text/plain", ".csv": "text/csv", ".log": "text/plain",
-  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
-  ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp", ".ico": "image/x-icon",
-  ".pdf": "application/pdf", ".zip": "application/zip", ".gz": "application/gzip", ".tar": "application/x-tar",
-};
 
 function textOf(content: unknown[]): string {
   return content

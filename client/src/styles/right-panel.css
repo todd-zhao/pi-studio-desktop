@@ -1,0 +1,210 @@
+/* ------------------------------------------------------------- right panel */
+
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-tab {
+  flex: 1;
+  padding: 10px;
+  text-align: center;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 2px solid transparent;
+}
+
+.panel-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.panel-body {
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.panel-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: -4px;
+}
+
+.mcp-server {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  padding: 8px 10px;
+}
+
+.mcp-server .row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-server .sname {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-server .sstatus {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.mcp-server .sact {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.mini-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border-2);
+  background: var(--bg-4);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.mini-btn.danger:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.mini-btn.primary {
+  color: var(--accent);
+  border-color: rgba(255, 138, 61, 0.4);
+}
+
+.mcp-server .row2 {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.skill-dir {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  word-break: break-all;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+}
+
+.skill-import-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.add-form {
+  border: 1px dashed var(--border-2);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-form input,
+.add-form textarea {
+  width: 100%;
+  background: var(--bg-4);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 9px;
+  font-size: 12px;
+  font-family: var(--mono);
+  outline: none;
+}
+
+.add-form input:focus,
+.add-form textarea:focus {
+  border-color: var(--accent);
+}
+
+.add-form textarea {
+  resize: vertical;
+  min-height: 52px;
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+}
+
+.form-row .grow {
+  flex: 1;
+}
+
+.btn {
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border-2);
+  background: var(--bg-4);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: var(--accent-2);
+}
+
+.btn:hover {
+  background: var(--solid-hover);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+
+/* ------------------------------------------------------------- shared panel shell */
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.panel-hint {
+  margin: 14px 0 0;
+  color: var(--text-2);
+}

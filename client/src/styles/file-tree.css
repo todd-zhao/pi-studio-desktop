@@ -1,0 +1,126 @@
+/* ------------------------------------------------------------------ file tree */
+
+.file-tree {
+  padding: 4px 0 8px;
+  font-size: 12px;
+}
+
+.ft-root {
+  padding: 4px 10px 6px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.ft-root-row {
+  font-weight: 600;
+  color: var(--text-2);
+  padding-left: 10px;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  cursor: pointer;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ft-row:hover {
+  background: var(--bg-3);
+}
+
+.ft-row.ft-open {
+  background: var(--bg-hover);
+}
+
+.ft-row .ft-arrow {
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 10px;
+  text-align: center;
+}
+
+.ft-row .ft-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.ft-row .ft-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ft-row.ft-file {
+  color: var(--text-2);
+}
+
+/* hover “insert reference” button on file rows */
+.ft-row .ft-add {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  padding: 0;
+}
+
+.ft-row:hover .ft-add {
+  opacity: 1;
+}
+
+.ft-row .ft-add:hover {
+  background: var(--bg-4);
+}
+
+.ft-row .ft-move {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  padding: 0;
+}
+
+.ft-row:hover .ft-move {
+  opacity: 1;
+}
+
+.ft-row .ft-move:hover {
+  background: var(--bg-4);
+  color: var(--text);
+}
+
+.ft-hint {
+  padding: 2px 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.ft-hint.err {
+  color: var(--red);
+  font-style: normal;
+}
+

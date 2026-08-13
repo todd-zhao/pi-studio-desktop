@@ -1,0 +1,24 @@
+﻿/*
+ * PiStudio client styles - split by section/component.
+ * IMPORTANT: import order below must be preserved; the cascade is order-sensitive
+ * (later sections intentionally override earlier ones, e.g. team.css).
+ */
+@import "./base.css";
+@import "./file-tree.css";
+@import "./layout.css";
+@import "./file-preview.css";
+@import "./sidebar.css";
+@import "./chat.css";
+@import "./messages.css";
+@import "./thinking.css";
+@import "./tool-calls.css";
+@import "./composer.css";
+@import "./autocomplete.css";
+@import "./right-panel.css";
+@import "./model-panel.css";
+@import "./market.css";
+@import "./modal.css";
+@import "./toasts.css";
+@import "./markdown.css";
+@import "./team.css";
+@import "./wechat.css";

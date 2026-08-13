@@ -19,6 +19,10 @@ extraResources:
     to: server/dist
   - from: dist/runtime-stage/Pi Studio/client/dist
     to: client/dist
+  - from: dist/runtime-stage/Pi Studio/team-server/dist
+    to: team-server/dist
+  - from: dist/runtime-stage/Pi Studio/team-server/node_modules
+    to: team-server/node_modules
 npmRebuild: false
 afterPack: scripts/after-pack.cjs
 electronLanguages:

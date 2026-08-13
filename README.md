@@ -129,10 +129,11 @@ agent 运行过程中的产物（thinking、工具调用）**默认自动收缩*
 ├── server/                 # Node 后端
 │   └── src/
 │       ├── index.ts        # Express + WebSocket + REST
-│       ├── bridge.ts       # Pi SDK 会话桥接（事件流 → WS）
-│       └── types.ts        # 前后端共享协议类型
+│       └── bridge.ts       # Pi SDK 会话桥接（事件流 → WS）
 ├── client/                 # React 前端（Vite）
 │   └── src/components/     # Sidebar / Chat / Message / Composer / McpPanel / McpMarket
+├── shared/                 # 前后端共享协议类型
+│   └── src/types.ts        # 单一来源（@pi-studio/shared）
 └── workspace/              # agent 工作区（上传文件）
 ```
 

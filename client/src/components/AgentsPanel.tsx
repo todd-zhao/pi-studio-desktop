@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { listAgents, removeAgent, saveAgent, setActiveAgent } from "../api";
 import type { AgentProfile } from "../types";
+import { PanelShell } from "./PanelShell";
+import { usePanel } from "../hooks/usePanel";
 
 interface Props {
   activeAgentId?: string;
@@ -15,7 +17,7 @@ const emptyAgent = (): Omit<AgentProfile, "builtIn"> => ({ id: "", name: "", des
 export function AgentsPanel({ activeAgentId, onActiveChange, onAgentsChange, onClose, onToast }: Props) {
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [editing, setEditing] = useState<Omit<AgentProfile, "builtIn">>(emptyAgent());
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = usePanel(onToast);
 
   const refresh = async () => {
     try {
@@ -33,55 +35,36 @@ export function AgentsPanel({ activeAgentId, onActiveChange, onAgentsChange, onC
     setEditing({ id: agent.id, name: agent.name, description: agent.description, prompt: agent.prompt, memory: agent.memory ?? "" });
   };
 
-  const save = async () => {
-    setBusy(true);
-    try {
+  const save = () => {
+    run(async () => {
       const id = editing.id.trim() || `agent-${Date.now().toString(36)}`;
       await saveAgent({ ...editing, id });
       setEditing(emptyAgent());
       await refresh();
       onToast("ok", "Agent 已保存");
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const activate = async (id: string) => {
-    setBusy(true);
-    try {
+  const activate = (id: string) => {
+    run(async () => {
       onActiveChange(await setActiveAgent(id));
       onToast("ok", "已切换 Agent");
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const remove = async (agent: AgentProfile) => {
+  const remove = (agent: AgentProfile) => {
     if (!window.confirm(`确定删除 Agent “${agent.name}”吗？`)) return;
-    setBusy(true);
-    try {
+    run(async () => {
       await removeAgent(agent.id);
       if (agent.id === activeAgentId) onActiveChange(await setActiveAgent("default"));
       setEditing((current) => (current.id === agent.id ? emptyAgent() : current));
       await refresh();
       onToast("ok", "Agent 已删除");
-    } catch (e) {
-      onToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   return (
-    <div className="panel-body" style={{ overflowY: "auto", flex: 1 }}>
-      <div className="panel-tabs" style={{ margin: "-12px -12px 10px", padding: "0 12px", borderBottom: "1px solid var(--border)" }}>
-        <span className="panel-title" style={{ lineHeight: "36px" }}>Agent 管理</span>
-        <button className="icon-btn" title="关闭" style={{ marginLeft: "auto", marginTop: "8px" }} onClick={onClose}>×</button>
-      </div>
+    <PanelShell variant="tabs" title="Agent 管理" onClose={onClose}>
       <div className="panel-sub">切换后，所选 Agent 的提示词会应用到后续消息。</div>
       <div className="agent-list">
         {agents.map((agent) => (
@@ -116,6 +99,6 @@ export function AgentsPanel({ activeAgentId, onActiveChange, onAgentsChange, onC
         <button className="btn primary" disabled={busy || !editing.name.trim()} onClick={() => void save()}>保存</button>
         {editing.id && <button className="btn" disabled={busy} onClick={() => setEditing(emptyAgent())}>取消编辑</button>}
       </div>
-    </div>
+    </PanelShell>
   );
 }

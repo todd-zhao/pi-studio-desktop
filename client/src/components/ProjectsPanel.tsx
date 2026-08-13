@@ -1,19 +1,25 @@
 import { useEffect, useState } from "react";
 import {
   addProjectDocument,
+  archiveProject,
   assignSessionToProject,
   createProject,
   getProject,
+  listArchivedProjects,
   listProjects,
   removeProject,
   removeProjectDocument,
   removeProjectMemory,
+  restoreProject,
   saveProjectMemory,
   searchProject,
   updateProject,
   uploadFiles,
 } from "../api";
 import type { Project, ProjectMemoryType, ProjectSearchResult, ProjectSummary } from "../types";
+import { PanelShell } from "./PanelShell";
+import { DirPicker } from "./DirPicker";
+import { usePanel } from "../hooks/usePanel";
 
 interface Props {
   projects: ProjectSummary[];
@@ -26,8 +32,8 @@ interface Props {
   onToast: (level: "info" | "warn" | "error" | "ok", message: string) => void;
 }
 
-type ProjectDraft = { name: string; description: string; workspacePaths: string[]; instructions: string };
-const emptyDraft: ProjectDraft = { name: "", description: "", workspacePaths: [], instructions: "" };
+type ProjectDraft = { name: string; description: string; workspacePaths: string[]; mainWorkspacePath: string; instructions: string };
+const emptyDraft: ProjectDraft = { name: "", description: "", workspacePaths: [], mainWorkspacePath: "", instructions: "" };
 const memoryTypes: ProjectMemoryType[] = ["fact", "decision", "preference", "summary"];
 
 export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, onProjectsChange, onStateRefresh, onSessionSelect, onClose, onToast }: Props) {
@@ -38,22 +44,23 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemory, setEditingMemory] = useState<{ content: string; type: ProjectMemoryType; pinned: boolean }>({ content: "", type: "fact", pinned: false });
   const [documentPath, setDocumentPath] = useState("");
-  const [workspaceInput, setWorkspaceInput] = useState("");
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [pickTarget, setPickTarget] = useState<"workspace" | "main" | null>(null);
+  const [archivedProjects, setArchivedProjects] = useState<ProjectSummary[]>([]);
+  const { busy, setBusy, run } = usePanel(onToast);
 
   const refreshProjects = async (nextSelectedId = selectedId) => {
     const summaries = await listProjects();
     onProjectsChange(summaries);
+    setArchivedProjects(await listArchivedProjects());
     const id = nextSelectedId && summaries.some((item) => item.id === nextSelectedId) ? nextSelectedId : summaries[0]?.id ?? null;
     setSelectedId(id);
     if (id) {
       const detail = await getProject(id);
       setProject(detail);
-      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], instructions: detail.instructions });
-      setWorkspaceInput("");
+      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], mainWorkspacePath: detail.mainWorkspacePath ?? "", instructions: detail.instructions });
     } else {
       setProject(null);
       setDraft(emptyDraft);
@@ -92,8 +99,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     try {
       const detail = await getProject(id);
       setProject(detail);
-      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], instructions: detail.instructions });
-      setWorkspaceInput("");
+      setDraft({ name: detail.name, description: detail.description, workspacePaths: detail.workspacePaths ?? [], mainWorkspacePath: detail.mainWorkspacePath ?? "", instructions: detail.instructions });
     } catch (error) {
       onToast("error", (error as Error).message);
     }
@@ -107,11 +113,11 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     setBusy(true);
     try {
       if (project) {
-        await updateProject(project.id, { ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()) });
+        await updateProject(project.id, { ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()), mainWorkspacePath: draft.mainWorkspacePath.trim() || null });
         onToast("ok", "项目已更新");
         await refreshProjects(project.id);
       } else {
-        const created = await createProject({ ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()) });
+        const created = await createProject({ ...draft, workspacePaths: draft.workspacePaths.filter((path) => path.trim()), mainWorkspacePath: draft.mainWorkspacePath.trim() || null });
         onToast("ok", "项目已创建");
         await refreshProjects(created.id);
       }
@@ -128,6 +134,50 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     setBusy(true);
     try {
       await removeProject(project.id);
+      await refreshProjects(null);
+      onStateRefresh();
+      onToast("ok", "项目已删除");
+    } catch (error) {
+      onToast("error", (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveSelected = async () => {
+    if (!project || !window.confirm("确定归档项目“" + project.name + "”吗？归档后项目及其会话不再显示在侧栏，可随时还原。")) return;
+    setBusy(true);
+    try {
+      await archiveProject(project.id);
+      await refreshProjects(null);
+      onStateRefresh();
+      onToast("ok", "项目已归档");
+    } catch (error) {
+      onToast("error", (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreArchived = async (id: string) => {
+    setBusy(true);
+    try {
+      await restoreProject(id);
+      await refreshProjects(id);
+      onStateRefresh();
+      onToast("ok", "项目已还原");
+    } catch (error) {
+      onToast("error", (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeArchived = async (id: string) => {
+    if (!window.confirm("确定永久删除该归档项目吗？会话文件和文档不会被删除。")) return;
+    setBusy(true);
+    try {
+      await removeProject(id);
       await refreshProjects(null);
       onStateRefresh();
       onToast("ok", "项目已删除");
@@ -189,17 +239,13 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
     }
   };
 
-  const uploadDocument = async (file: File) => {
-    setBusy(true);
-    try {
+  const uploadDocument = (file: File) => {
+    run(async () => {
       const uploaded = await uploadFiles([file]);
       const item = uploaded[0];
       if (!item) throw new Error("上传没有返回文件");
       await addDocument(item.path, item.name);
-    } catch (error) {
-      onToast("error", (error as Error).message);
-      setBusy(false);
-    }
+    });
   };
 
   const addCurrentSession = async () => {
@@ -225,11 +271,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   };
 
   return (
-    <div className="panel-body" style={{ overflowY: "auto", flex: 1 }}>
-      <div className="panel-tabs" style={{ margin: "-12px -12px 10px", padding: "0 12px", borderBottom: "1px solid var(--border)" }}>
-        <span className="panel-title" style={{ lineHeight: "36px" }}>项目</span>
-        <button className="icon-btn" title="关闭" style={{ marginLeft: "auto", marginTop: "8px" }} onClick={onClose}>×</button>
-      </div>
+    <PanelShell variant="tabs" title="项目" onClose={onClose}>
       <div className="panel-sub">项目会话共享项目指令、记忆和文档引用；原始会话文件保持不变。</div>
 
       <div className="form-row" style={{ marginTop: 12 }}>
@@ -258,17 +300,17 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
           </div>
         ))}
         <div className="form-row" style={{ gap: 6 }}>
-          <input className="grow" placeholder="添加项目工作区路径（可选）" value={workspaceInput} onChange={(event) => setWorkspaceInput(event.target.value)} />
-          <button className="mini-btn primary" type="button" disabled={!workspaceInput.trim()} onClick={() => {
-            const path = workspaceInput.trim();
-            if (path && !draft.workspacePaths.includes(path)) setDraft({ ...draft, workspacePaths: [...draft.workspacePaths, path] });
-            setWorkspaceInput("");
-          }}>添加</button>
+          <button className="mini-btn primary" type="button" onClick={() => setPickTarget("workspace")}>添加文件夹</button>
         </div>
+      </div>
+      <div className="form-row" style={{ marginTop: 6, gap: 6 }}>
+        <input className="grow" placeholder="主工作区（可选，留空则取第一个挂载文件夹）" value={draft.mainWorkspacePath} onChange={(event) => setDraft({ ...draft, mainWorkspacePath: event.target.value })} />
+        <button className="mini-btn" type="button" title="选择目录" onClick={() => setPickTarget("main")}>＋</button>
       </div>
       <div className="form-row" style={{ marginTop: 6 }}><textarea className="grow" rows={4} placeholder="项目指令：所有项目会话都应遵守的约束" value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></div>
       <div className="settings-actions">
         <button className="mini-btn primary" disabled={busy} onClick={() => void save()}>{project ? "保存项目" : "创建项目"}</button>
+        {project && <button className="mini-btn" disabled={busy} onClick={() => void archiveSelected()}>归档</button>}
         {project && <button className="mini-btn danger" disabled={busy} onClick={() => void remove()}>删除项目</button>}
       </div>
 
@@ -347,6 +389,43 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
           </div>
         </>
       )}
-    </div>
+      {pickTarget && (
+        <DirPicker
+          title={pickTarget === "main" ? "选择主工作区目录" : "选择项目工作区目录"}
+          initialPath={draft.mainWorkspacePath || draft.workspacePaths[0] || undefined}
+          onSelect={(path) => {
+            if (pickTarget === "main") {
+              setDraft((current) => ({ ...current, mainWorkspacePath: path }));
+            } else {
+              setDraft((current) => (current.workspacePaths.includes(path) ? current : { ...current, workspacePaths: [...current.workspacePaths, path] }));
+            }
+            setPickTarget(null);
+          }}
+          onClose={() => setPickTarget(null)}
+        />
+      )}
+      {archivedProjects.length > 0 && (
+        <>
+          <div className="panel-title" style={{ marginTop: 20 }}>已归档项目</div>
+          <div className="panel-sub">归档项目不会显示在侧栏和会话列表中，可随时还原。</div>
+          <div className="agent-list">
+            {archivedProjects.map((item) => (
+              <div className="agent-item" key={item.id}>
+                <div className="agent-row">
+                  <div>
+                    <div className="agent-name">{item.name}</div>
+                    <div className="agent-description">{item.sessionCount} 个会话 · {item.documentCount} 个文档</div>
+                  </div>
+                  <div className="agent-actions">
+                    <button className="mini-btn" disabled={busy} onClick={() => void restoreArchived(item.id)}>还原</button>
+                    <button className="mini-btn danger" disabled={busy} onClick={() => void removeArchived(item.id)}>删除</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </PanelShell>
   );
 }
