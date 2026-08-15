@@ -24,6 +24,7 @@ interface Props {
 export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEditQueued, onSaveMemory, canSaveMemory }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [stickBottom, setStickBottom] = useState(true);
+  const [stickTop, setStickTop] = useState(true);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState("");
   const showEmpty = messages.length === 0 && !isStreaming && !live.liveText;
@@ -36,6 +37,7 @@ export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEd
     const el = ref.current;
     if (!el) return;
     setStickBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    setStickTop(el.scrollTop < 80);
   };
 
   const jumpToStart = () => {
@@ -48,7 +50,7 @@ export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEd
 
   return (
     <div className="chat" ref={ref} onScroll={onScroll}>
-      {!showEmpty && (
+      {!showEmpty && !stickTop && (
         <div className="chat-jump-top-wrap">
           <button type="button" className="chat-jump-btn chat-jump-top" title="跳到对话开头" onClick={jumpToStart}>↑</button>
         </div>
@@ -170,7 +172,7 @@ export function Chat({ messages, live, queued, isStreaming, onCancelQueued, onEd
         )}
       </div>
 
-      {!showEmpty && (
+      {!showEmpty && !stickBottom && (
         <div className="chat-jump-bottom-wrap">
           <button type="button" className="chat-jump-btn chat-jump-bottom" title="跳到对话结尾" onClick={jumpToEnd}>↓</button>
         </div>

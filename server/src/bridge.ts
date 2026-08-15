@@ -656,7 +656,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   async deleteSession(file: string): Promise<{ activeFile?: string }> {
     const target = resolve(file);
-    const infos = await SessionManager.list(this.cwd);
+    const infos = await SessionManager.listAll();
     const info = infos.find((item) => resolve(item.path) === target);
     if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
     const runtime = this.findRuntimeByFile(target);
@@ -691,7 +691,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
 
   async archiveSession(file: string): Promise<{ activeFile?: string }> {
     const target = resolve(file);
-    const infos = await SessionManager.list(this.cwd);
+    const infos = await SessionManager.listAll();
     const info = infos.find((item) => resolve(item.path) === target);
     if (!info || extname(target).toLowerCase() !== ".jsonl") throw new Error("Session file not found");
     if (this.archivedSessions.has(target)) throw new Error("对话已归档");
