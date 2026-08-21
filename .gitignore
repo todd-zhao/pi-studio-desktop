@@ -11,3 +11,5 @@ workspace/.mcp.json
 
 data/workspaces.json
 .desktop-package-stage/
+.freeze-test*.mjs
+.ui-*.mjs
