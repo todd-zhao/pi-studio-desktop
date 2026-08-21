@@ -6,6 +6,7 @@ import {
   type TaskDetail, type TeamMember, type TeamRole, type TeamTask, type TeamUser,
 } from "../team-api";
 
+import { confirmDialog } from "./confirm";
 import { PanelShell } from "./PanelShell";
 import { usePanel } from "../hooks/usePanel";
 
@@ -163,7 +164,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
           {detail.task.assignee_id === user.id && detail.task.status !== "review" && detail.task.status !== "done" && <button className="btn" onClick={() => void changeStatus("review")}>提交审核</button>}
           {(user.role === "owner" || user.role === "admin") && detail.task.status === "review" && <><button className="btn primary" onClick={() => void changeStatus("done")}>审核通过</button><button className="btn" onClick={() => void changeStatus("changes_requested")}>需要修改</button></>}
           {(user.role === "owner" || user.role === "admin") && <button className="btn danger" onClick={async () => {
-            if (!window.confirm(`确定删除任务“${detail.task.title}”及全部成果文件吗？此操作无法恢复。`)) return;
+            if (!(await confirmDialog(`确定删除任务“${detail.task.title}”及全部成果文件吗？此操作无法恢复。`, { danger: true, confirmText: "删除" }))) return;
             try { await deleteTeamTask(detail.task.id); setDetail(null); await refreshTasks(); onToast("ok", "任务已删除"); }
             catch (error) { onToast("error", (error as Error).message); }
           }}>删除任务</button>}
@@ -173,7 +174,7 @@ export function TeamPanel({ onClose, onToast }: Props) {
           {detail.artifacts.map((artifact) => <div key={artifact.id} className="team-artifact-row">
             <button className="team-artifact" onClick={() => void downloadTaskArtifact(artifact).catch((e) => onToast("error", e.message))}><span>{artifact.original_name}</span><small>v{artifact.version} · {artifact.uploader_name}</small></button>
             {(user.role === "owner" || user.role === "admin" || artifact.uploaded_by === user.id) && <button className="mini-btn danger" onClick={async () => {
-              if (!window.confirm(`确定删除文件“${artifact.original_name}”吗？`)) return;
+              if (!(await confirmDialog(`确定删除文件“${artifact.original_name}”吗？`, { danger: true, confirmText: "删除" }))) return;
               try { await deleteTaskArtifact(artifact.id); await refreshTasks(); onToast("ok", "文件已删除"); }
               catch (error) { onToast("error", (error as Error).message); }
             }}>删除</button>}
@@ -226,14 +227,14 @@ export function TeamPanel({ onClose, onToast }: Props) {
             try { await updateTeamMemberRole(member.id, e.target.value as Exclude<TeamRole, "owner">); await refreshMembers(); onToast("ok", "成员角色已更新"); }
             catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }
           }}><option value="admin">管理员</option><option value="member">成员</option><option value="guest">访客</option></select><button className="mini-btn danger" disabled={busy} onClick={async () => {
-            if (!window.confirm(`确定移除成员“${member.displayName}”吗？`)) return;
+            if (!(await confirmDialog(`确定移除成员“${member.displayName}”吗？`, { danger: true, confirmText: "移除" }))) return;
             setBusy(true);
             try { await removeTeamMember(member.id); await refreshMembers(); onToast("ok", "成员已移除"); }
             catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }
           }}>移除</button></>}
         </div>)}
         <button className="btn danger team-clear-content" disabled={busy} onClick={async () => {
-          if (!window.confirm("确定清空全部任务、评论和成果文件吗？成员账号与团队名称会保留，此操作无法恢复。")) return;
+          if (!(await confirmDialog("确定清空全部任务、评论和成果文件吗？\n成员账号与团队名称会保留，此操作无法恢复。", { title: "清空团队内容", danger: true, confirmText: "清空" }))) return;
           setBusy(true);
           try { const result = await clearTeamContent(); setDetail(null); await refreshTasks(); onToast("ok", `已清空 ${result.removedTasks} 个任务及其成果文件`); }
           catch (error) { onToast("error", (error as Error).message); } finally { setBusy(false); }

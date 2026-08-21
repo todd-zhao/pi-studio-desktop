@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { importSkills, listSkills, removeSkill } from "../api";
 import type { SkillSummary } from "../types";
+import { confirmDialog } from "./confirm";
 import { PanelShell } from "./PanelShell";
 import { usePanel } from "../hooks/usePanel";
 
@@ -41,8 +42,8 @@ export function SkillsPanel({ onClose, onToast }: Props) {
     });
   };
 
-  const remove = (skill: SkillSummary) => {
-    if (!window.confirm(`确定删除 skill “${skill.name}”吗？`)) return;
+  const remove = async (skill: SkillSummary) => {
+    if (!(await confirmDialog(`确定删除 skill “${skill.name}”吗？`, { danger: true, confirmText: "删除" }))) return;
     run(async () => {
       setSkills(await removeSkill(skill.name));
       onToast("ok", `已删除 ${skill.name}`);

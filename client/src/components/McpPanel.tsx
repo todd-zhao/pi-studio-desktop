@@ -2,6 +2,7 @@ import { useState } from "react";
 import { addMcpServer, addMcpServersBatch, getMcpConfig, removeMcpServer } from "../api";
 import type { McpStatusSnapshot } from "../types";
 import { PanelShell } from "./PanelShell";
+import { confirmDialog } from "./confirm";
 import { usePanel } from "../hooks/usePanel";
 
 interface Props {
@@ -104,8 +105,8 @@ export function McpPanel({ mcp, onCommand, onClose, onToast }: Props) {
     });
   };
 
-  const removeServer = (n: string) => {
-    if (!window.confirm(`确定移除 MCP 服务 ${n} 吗？`)) return;
+  const removeServer = async (n: string) => {
+    if (!(await confirmDialog(`确定移除 MCP 服务 ${n} 吗？`, { danger: true, confirmText: "移除" }))) return;
     run(async () => {
       await removeMcpServer(n);
       onToast("ok", `已移除 ${n}`);

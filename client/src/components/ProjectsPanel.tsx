@@ -17,6 +17,7 @@ import {
   uploadFiles,
 } from "../api";
 import type { Project, ProjectMemoryType, ProjectSearchResult, ProjectSummary } from "../types";
+import { confirmDialog } from "./confirm";
 import { PanelShell } from "./PanelShell";
 import { DirPicker } from "./DirPicker";
 import { usePanel } from "../hooks/usePanel";
@@ -130,7 +131,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   };
 
   const remove = async () => {
-    if (!project || !window.confirm("确定删除项目“" + project.name + "”吗？会话文件和文档不会被删除。")) return;
+    if (!project || !(await confirmDialog(`确定删除项目“${project.name}”吗？会话文件和文档不会被删除。`, { danger: true, confirmText: "删除" }))) return;
     setBusy(true);
     try {
       await removeProject(project.id);
@@ -145,7 +146,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   };
 
   const archiveSelected = async () => {
-    if (!project || !window.confirm("确定归档项目“" + project.name + "”吗？归档后项目及其会话不再显示在侧栏，可随时还原。")) return;
+    if (!project || !(await confirmDialog(`确定归档项目“${project.name}”吗？归档后项目及其会话不再显示在侧栏，可随时还原。`, { title: "归档项目", confirmText: "归档" }))) return;
     setBusy(true);
     try {
       await archiveProject(project.id);
@@ -174,7 +175,7 @@ export function ProjectsPanel({ projects, currentSessionFile, currentProjectId, 
   };
 
   const removeArchived = async (id: string) => {
-    if (!window.confirm("确定永久删除该归档项目吗？会话文件和文档不会被删除。")) return;
+    if (!(await confirmDialog("确定永久删除该归档项目吗？会话文件和文档不会被删除。", { danger: true, confirmText: "永久删除" }))) return;
     setBusy(true);
     try {
       await removeProject(id);

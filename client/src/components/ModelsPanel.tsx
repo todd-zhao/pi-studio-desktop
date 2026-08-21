@@ -9,6 +9,7 @@ import {
   unregisterModelProvider,
 } from "../api";
 import type { ModelCatalogEntry } from "../types";
+import { confirmDialog } from "./confirm";
 import { PanelShell } from "./PanelShell";
 import { usePanel } from "../hooks/usePanel";
 
@@ -146,8 +147,8 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
     });
   };
 
-  const unregister = (n: string) => {
-    if (!window.confirm(`确定注销提供方「${n}」？此操作会从 models.json 中删除该配置。`)) return;
+  const unregister = async (n: string) => {
+    if (!(await confirmDialog(`确定注销提供方「${n}」？此操作会从 models.json 中删除该配置。`, { danger: true, confirmText: "注销" }))) return;
     run(async () => {
       const res = await unregisterModelProvider(n);
       if (res.errors?.length) onToast("warn", `已注销，但刷新有告警: ${res.errors.join("；")}`);
@@ -170,9 +171,9 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
     });
   };
 
-  const clearApiKey = () => {
+  const clearApiKey = async () => {
     if (!keyProvider) return;
-    if (!window.confirm(`清除 ${keyProvider} 的运行时 API Key？`)) return;
+    if (!(await confirmDialog(`清除 ${keyProvider} 的 API Key？清除后将无法调用该供应商的模型，直到重新配置。`, { title: "清除 API Key", danger: true, confirmText: "清除" }))) return;
     run(async () => {
       await removeProviderApiKey(keyProvider);
       onToast("ok", `已清除 ${keyProvider} 的 API Key`);

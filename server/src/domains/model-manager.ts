@@ -132,8 +132,13 @@ export class ModelManager {
     // the in-process refresh below fails, then activate it in the runtime
     // (process-local overlay) and refresh the provider snapshot.
     await this.appCredentials.modify(providerId, async () => ({ type: "api_key", key }));
+    // The abort signal matters: withTimeout below only abandons the promise, it
+    // cannot unblock the runtime's per-provider credential queue. If a network
+    // call inside the operation hangs, an aborted signal lets that queued
+    // operation settle so later set_model/prompt calls are not stuck behind it.
+    const signal = AbortSignal.timeout(15_000);
     await withTimeout(
-      this.modelRuntime.setRuntimeApiKey(providerId, key),
+      this.modelRuntime.setRuntimeApiKey(providerId, key, { signal }),
       15_000,
       "保存 API Key 超时",
     );
@@ -147,9 +152,10 @@ export class ModelManager {
     // network-bound (allowNetwork defaults to true), so a slow or failed
     // availability check must not block the authoritative cleanup below.
     try {
+      const removeSignal = AbortSignal.timeout(15_000);
       await withTimeout(
-        this.modelRuntime.removeRuntimeApiKey(providerId),
-        15_000,
+        this.modelRuntime.removeRuntimeApiKey(providerId, { signal: removeSignal }),
+        16_000,
         "清除 API Key 超时",
       );
     } catch (error) {

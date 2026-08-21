@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listAgents, removeAgent, saveAgent, setActiveAgent } from "../api";
 import type { AgentProfile } from "../types";
+import { confirmDialog } from "./confirm";
 import { PanelShell } from "./PanelShell";
 import { usePanel } from "../hooks/usePanel";
 
@@ -52,8 +53,8 @@ export function AgentsPanel({ activeAgentId, onActiveChange, onAgentsChange, onC
     });
   };
 
-  const remove = (agent: AgentProfile) => {
-    if (!window.confirm(`确定删除 Agent “${agent.name}”吗？`)) return;
+  const remove = async (agent: AgentProfile) => {
+    if (!(await confirmDialog(`确定删除 Agent “${agent.name}”吗？`, { danger: true, confirmText: "删除" }))) return;
     run(async () => {
       await removeAgent(agent.id);
       if (agent.id === activeAgentId) onActiveChange(await setActiveAgent("default"));
