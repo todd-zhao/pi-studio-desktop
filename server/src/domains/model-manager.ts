@@ -69,12 +69,16 @@ export class ModelManager {
     this.writeModelsJson(data);
   }
 
-  async refreshModels(): Promise<{ errors: string[] }> {
+  async refreshModels(options?: { force?: boolean }): Promise<{ errors: string[] }> {
     let result: { errors?: ReadonlyMap<string, Error> } | undefined;
     try {
+      // Allow fetching remote model catalogs (pi.dev) unless the app runs in
+      // offline mode. The desktop shell sets PI_OFFLINE=1 so startup stays
+      // network-free; explicit user-triggered refreshes still honor it.
+      const allowNetwork = process.env.PI_OFFLINE !== "1";
       result = await withTimeout(
-        this.modelRuntime.refresh({ allowNetwork: false }),
-        15_000,
+        this.modelRuntime.refresh({ allowNetwork, force: options?.force }),
+        30_000,
         "模型刷新超时",
       );
     } catch (error) {

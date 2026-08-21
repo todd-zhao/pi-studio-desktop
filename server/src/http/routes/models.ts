@@ -12,6 +12,20 @@ export function createModelsRouter(ctx: ServerContext): Router {
     }
   });
 
+  // Explicit user-triggered refresh: re-reads provider configs and, unless the
+  // app runs offline (PI_OFFLINE=1), fetches remote model catalogs so newly
+  // published models show up without restarting the app.
+  router.post("/models/refresh", async (_req, res) => {
+    try {
+      // force=true bypasses the remote catalog's 4-hour revalidation throttle:
+      // the user explicitly asked to check for newer models.
+      const { errors } = await ctx.bridge.refreshModels({ force: true });
+      res.json({ ok: true, errors, catalog: ctx.bridge.listModels() });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
   router.get("/models/config", (_req, res) => {
     res.json(ctx.bridge.readModelsJson());
   });

@@ -321,6 +321,10 @@ export async function getModelsConfig(): Promise<Record<string, unknown>> {
   return json<Record<string, unknown>>("/api/models/config");
 }
 
+export async function refreshModels(): Promise<{ ok: boolean; errors: string[]; catalog: ModelCatalogEntry[] }> {
+  return json("/api/models/refresh", { method: "POST" });
+}
+
 export async function registerModelProvider(name: string, config: Record<string, unknown>): Promise<{ ok: boolean; name: string; errors: string[] }> {
   return json("/api/models/register", {
     method: "POST",

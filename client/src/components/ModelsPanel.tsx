@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   getModelsConfig,
   listModels,
+  refreshModels,
   registerModelProvider,
   removeProviderApiKey,
   setProviderApiKey,
@@ -52,6 +53,26 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
       setLoading(false);
     }
   }, [keyProvider, onToast]);
+
+  // Full reload: ask the server to refresh the model catalog (including the
+  // remote pi.dev overlay when online), then re-read the snapshot.
+  const reloadCatalog = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await refreshModels();
+      if (result.errors.length > 0) {
+        onToast("warn", `部分供应商刷新失败：${result.errors.join("；")}`);
+      }
+      const [cat, cfg] = await Promise.all([listModels(), getModelsConfig()]);
+      setCatalog(cat);
+      setConfig(cfg);
+      onToast("ok", "模型目录已刷新");
+    } catch (e) {
+      onToast("error", (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [onToast]);
 
   useEffect(() => {
     void refresh();
@@ -165,7 +186,7 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
       title="模型管理"
       subtitle="注册 / 注销 / 切换"
       actions={
-        <button className="mini-btn" onClick={() => void refresh()} title="重新加载模型目录">
+        <button className="mini-btn" onClick={() => void reloadCatalog()} title="重新加载模型目录（联网检查更新）">
           ↻ 刷新
         </button>
       }
