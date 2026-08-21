@@ -1180,7 +1180,7 @@ export class PiBridge extends EventEmitter<BridgeEvents> {
   }
 
   /** Reload models.json + refresh availability, then push the new state to clients. */
-  async refreshModels(options?: { force?: boolean }): Promise<{ errors: string[] }> {
+  async refreshModels(options?: { force?: boolean; online?: boolean }): Promise<{ errors: string[] }> {
     return this.modelManager.refreshModels(options);
   }
 

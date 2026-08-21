@@ -69,13 +69,14 @@ export class ModelManager {
     this.writeModelsJson(data);
   }
 
-  async refreshModels(options?: { force?: boolean }): Promise<{ errors: string[] }> {
+  async refreshModels(options?: { force?: boolean; online?: boolean }): Promise<{ errors: string[] }> {
     let result: { errors?: ReadonlyMap<string, Error> } | undefined;
     try {
       // Allow fetching remote model catalogs (pi.dev) unless the app runs in
       // offline mode. The desktop shell sets PI_OFFLINE=1 so startup stays
-      // network-free; explicit user-triggered refreshes still honor it.
-      const allowNetwork = process.env.PI_OFFLINE !== "1";
+      // network-free; an explicit user-triggered refresh (online: true) always
+      // goes online — that is the whole point of pressing "reload".
+      const allowNetwork = options?.online === true || process.env.PI_OFFLINE !== "1";
       result = await withTimeout(
         this.modelRuntime.refresh({ allowNetwork, force: options?.force }),
         30_000,
