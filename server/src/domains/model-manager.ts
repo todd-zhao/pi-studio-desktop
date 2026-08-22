@@ -5,6 +5,17 @@ import type { ModelCatalogEntry, ModelInfo } from "@pi-studio/shared";
 import type { AppCredentialStore } from "../credential-store.ts";
 import { withTimeout } from "./shared.ts";
 
+/** Minimal models.json definition for a discovered model. */
+interface DiscoveredModelDef {
+  id: string;
+  name: string;
+}
+
+interface ProviderEntryWithModels {
+  models?: DiscoveredModelDef[];
+  [key: string]: unknown;
+}
+
 export interface ModelManagerDeps {
   /** App-local pi agent directory (models.json / auth.json live here). */
   agentDir: string;
@@ -69,14 +80,14 @@ export class ModelManager {
     this.writeModelsJson(data);
   }
 
-  async refreshModels(options?: { force?: boolean; online?: boolean }): Promise<{ errors: string[] }> {
+  async refreshModels(options?: { force?: boolean; online?: boolean }): Promise<{ errors: string[]; discovered: string[] }> {
+    // Online unless the app runs in offline mode. The desktop shell sets
+    // PI_OFFLINE=1 so startup stays network-free; an explicit user-triggered
+    // refresh (online: true) always goes online — that is the whole point of
+    // pressing "reload".
+    const allowNetwork = options?.online === true || process.env.PI_OFFLINE !== "1";
     let result: { errors?: ReadonlyMap<string, Error> } | undefined;
     try {
-      // Allow fetching remote model catalogs (pi.dev) unless the app runs in
-      // offline mode. The desktop shell sets PI_OFFLINE=1 so startup stays
-      // network-free; an explicit user-triggered refresh (online: true) always
-      // goes online — that is the whole point of pressing "reload".
-      const allowNetwork = options?.online === true || process.env.PI_OFFLINE !== "1";
       result = await withTimeout(
         this.modelRuntime.refresh({ allowNetwork, force: options?.force }),
         30_000,
@@ -85,13 +96,23 @@ export class ModelManager {
     } catch (error) {
       result = { errors: new Map([[this.deps.agentDir, new Error((error as Error).message)]]) };
     }
+    // Beyond the pi.dev catalog overlay: enumerate each configured provider's
+    // own /models endpoint so brand-new models show up before the catalogs do.
+    let discovered: string[] = [];
+    if (allowNetwork) {
+      try {
+        discovered = await withTimeout(this.discoverProviderModels(), 45_000, "模型发现超时");
+      } catch {
+        /* best-effort */
+      }
+    }
     this.updateAvailableModels();
     this.deps.pushState();
     const errors: string[] = [];
     for (const [provider, error] of result?.errors ?? new Map()) {
       errors.push(`${provider}: ${error}`);
     }
-    return { errors };
+    return { errors, discovered };
   }
 
   listModels(): ModelCatalogEntry[] {
@@ -122,6 +143,83 @@ export class ModelManager {
         models,
       };
     });
+  }
+
+  /**
+   * Enumerate each API-key provider's official /models endpoint and merge ids
+   * missing from the catalog into models.json (minimal {id, name} definitions;
+   * all other fields are inherited from the existing catalog defaults).
+   * Returns "provider/modelId" strings that were newly added.
+   */
+  private async discoverProviderModels(): Promise<string[]> {
+    const added: string[] = [];
+    let infos;
+    try {
+      infos = await this.appCredentials.list();
+    } catch {
+      return added;
+    }
+    for (const info of infos) {
+      if (info.type !== "api_key") continue;
+      const providerId = info.providerId;
+      const provider = this.modelRuntime.getProvider(providerId);
+      const baseUrl = (provider as { baseUrl?: string } | undefined)?.baseUrl;
+      if (!baseUrl) continue;
+      let key: string | undefined;
+      try {
+        const cred = await this.appCredentials.read(providerId);
+        if (cred?.type === "api_key") key = cred.key;
+      } catch {
+        continue;
+      }
+      if (!key) continue;
+      try {
+        const url = baseUrl.endsWith("/") ? `${baseUrl}models` : `${baseUrl}/models`;
+        const res = await fetch(url, {
+          headers: { authorization: `Bearer ${key}`, accept: "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) continue;
+        const payload = (await res.json()) as { data?: Array<{ id?: string }> };
+        const remoteIds = (payload.data ?? [])
+          .map((m) => m.id)
+          .filter((x): x is string => typeof x === "string" && x.length > 0);
+        if (remoteIds.length === 0) continue;
+        const known = new Set(this.modelRuntime.getModels(providerId).map((m) => m.id));
+        const fresh = remoteIds.filter((id) => !known.has(id));
+        if (fresh.length === 0) continue;
+
+        const data = this.readModelsJson();
+        const providers = (data.providers ?? {}) as Record<string, ProviderEntryWithModels>;
+        const entry: ProviderEntryWithModels = { ...(providers[providerId] ?? {}) };
+        const existingDefs = Array.isArray(entry.models) ? entry.models : [];
+        const knownIds = new Set<string>([...known, ...existingDefs.map((d) => d.id)]);
+        const defs: DiscoveredModelDef[] = fresh
+          .filter((id) => !knownIds.has(id))
+          .map((id) => ({ id, name: id }));
+        if (defs.length === 0) continue;
+        entry.models = [...existingDefs, ...defs];
+        providers[providerId] = entry;
+        data.providers = providers;
+        this.writeModelsJson(data);
+        added.push(...defs.map((d) => `${providerId}/${d.id}`));
+      } catch {
+        /* provider unreachable or incompatible /models shape — skip */
+      }
+    }
+    if (added.length > 0) {
+      // Reload configs + recompose so the new models become live immediately.
+      try {
+        await withTimeout(
+          this.modelRuntime.refresh({ allowNetwork: false }),
+          15_000,
+          "模型发现后重载超时",
+        );
+      } catch {
+        /* ignore — next refresh picks them up */
+      }
+    }
+    return added;
   }
 
   async setProviderApiKey(provider: string, apiKey: string): Promise<void> {

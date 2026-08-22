@@ -64,10 +64,13 @@ export function ModelsPanel({ current, onSelect, onClose, onToast }: Props) {
       if (result.errors.length > 0) {
         onToast("warn", `部分供应商刷新失败：${result.errors.join("；")}`);
       }
+      if (result.discovered.length > 0) {
+        onToast("ok", `发现新模型：${result.discovered.join("、")}`);
+      }
       const [cat, cfg] = await Promise.all([listModels(), getModelsConfig()]);
       setCatalog(cat);
       setConfig(cfg);
-      onToast("ok", "模型目录已刷新");
+      if (result.discovered.length === 0) onToast("ok", "模型目录已刷新");
     } catch (e) {
       onToast("error", (e as Error).message);
     } finally {

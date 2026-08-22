@@ -321,7 +321,7 @@ export async function getModelsConfig(): Promise<Record<string, unknown>> {
   return json<Record<string, unknown>>("/api/models/config");
 }
 
-export async function refreshModels(): Promise<{ ok: boolean; errors: string[]; catalog: ModelCatalogEntry[] }> {
+export async function refreshModels(): Promise<{ ok: boolean; errors: string[]; discovered: string[]; catalog: ModelCatalogEntry[] }> {
   return json("/api/models/refresh", { method: "POST" });
 }
 

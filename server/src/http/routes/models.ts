@@ -20,8 +20,8 @@ export function createModelsRouter(ctx: ServerContext): Router {
       // force=true bypasses the remote catalog's 4-hour revalidation throttle;
       // online=true goes online even in offline mode (PI_OFFLINE=1) — the user
       // explicitly asked to check for newer models.
-      const { errors } = await ctx.bridge.refreshModels({ force: true, online: true });
-      res.json({ ok: true, errors, catalog: ctx.bridge.listModels() });
+      const { errors, discovered } = await ctx.bridge.refreshModels({ force: true, online: true });
+      res.json({ ok: true, errors, discovered, catalog: ctx.bridge.listModels() });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }
